@@ -291,9 +291,10 @@ async function syncRoute() {
   updateOrderBtn();
 }
 function updateOrderBtn() {
-  const btn = $("#orderBtn"), blocked = btn.dataset.blocked === "1";
-  btn.disabled = blocked || !state.quoteOk;
-  btn.textContent = blocked ? "You already have a ride" : "Book a taxi";
+    const btn = $("#orderBtn");
+    const blocked = btn.dataset.blocked === "1";
+    btn.disabled = blocked ? false : !state.quoteOk;
+    btn.textContent = blocked ? "You already have a ride" : "Book a taxi";
 }
 
 $("#pickupSelect").addEventListener("change", e => { state.pickup = e.target.value; syncRoute(); });
@@ -301,17 +302,28 @@ $("#dropoffSelect").addEventListener("change", e => { state.dropoff = e.target.v
 $("#swapBtn").addEventListener("click", () => { [state.pickup, state.dropoff] = [state.dropoff, state.pickup]; syncRoute(); });
 
 $("#orderForm").addEventListener("submit", async e => {
-  e.preventDefault();
-  const btn = $("#orderBtn");
-  btn.disabled = true; btn.textContent = "Finding a driver…";
-  try {
-    const r = await api("/api/rides", { method: "POST", body: { pickup: state.pickup, dropoff: state.dropoff } });
-    toast(`Ride #${r.ride_id} booked`);
-    state.pickup = state.dropoff = "";
-    await syncRoute();
-    await renderActiveBanner();
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  } catch (err) { toast(err.message, true); updateOrderBtn(); }
+    e.preventDefault();
+    const btn = $("#orderBtn");
+
+    if (btn.dataset.blocked === "1") {
+        alert("You already have an active ride! You cannot book a second one.");
+        return;
+    }
+
+    btn.disabled = true; 
+    btn.textContent = "Finding a driver...";
+    try {
+        const r = await api("/api/rides", { method: "POST", body: { pickup: state.pickup, dropoff: state.dropoff } });
+        toast(`Ride #${r.ride_id} booked`);
+        state.pickup = ""; state.dropoff = "";
+        await syncRoute();
+        await renderActiveBanner();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (err) {
+        alert("Warning: " + (err.message || "Failed to book a ride"));
+        toast(err.message, true);
+        updateOrderBtn();
+    }
 });
 
 /* =========================== PASSENGER: MY RIDES =========================== */
