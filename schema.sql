@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS passengers (
     full_name         TEXT    NOT NULL,
     phone             TEXT    NOT NULL UNIQUE,
     email             TEXT    UNIQUE,
-    registration_date TEXT    NOT NULL DEFAULT (date('now'))
+    registration_date TEXT    NOT NULL DEFAULT (date('now')),
+    password_hash     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS drivers (
@@ -15,7 +16,8 @@ CREATE TABLE IF NOT EXISTS drivers (
     full_name      TEXT    NOT NULL,
     phone          TEXT    NOT NULL UNIQUE,
     license_number TEXT    NOT NULL UNIQUE,
-    rating         REAL    NOT NULL DEFAULT 5.0 CHECK (rating BETWEEN 1 AND 5)
+    rating         REAL    NOT NULL DEFAULT 5.0 CHECK (rating BETWEEN 1 AND 5),
+    password_hash  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS cars (
@@ -36,7 +38,8 @@ CREATE TABLE IF NOT EXISTS rides (
     start_time      TEXT    NOT NULL,
     status          TEXT    NOT NULL DEFAULT 'requested'
                     CHECK (status IN ('requested','completed','cancelled')),
-    price           INTEGER NOT NULL CHECK (price > 0)   -- KZT
+    price           INTEGER NOT NULL CHECK (price > 0),
+    ride_rating     INTEGER CHECK (ride_rating BETWEEN 1 AND 5)
 );
 
 CREATE TABLE IF NOT EXISTS payments (

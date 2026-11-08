@@ -32,3 +32,15 @@ WHERE r.status = 'completed'
 -- 4) Most popular pickup points
 SELECT pickup_address, COUNT(*) AS rides
 FROM rides GROUP BY pickup_address ORDER BY rides DESC LIMIT 5;
+
+
+
+-- 5) Recalculate a driver's rating as the average of their ride ratings
+UPDATE drivers
+SET rating = COALESCE(
+    (SELECT ROUND(AVG(ride_rating), 1)
+     FROM rides
+     WHERE rides.driver_id = drivers.driver_id
+       AND ride_rating IS NOT NULL),
+    rating)
+WHERE driver_id = 1;

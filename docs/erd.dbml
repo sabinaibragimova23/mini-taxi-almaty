@@ -1,0 +1,49 @@
+// MiniTaxi Almaty: paste this into https://dbdiagram.io to edit the ERD
+
+Table passengers {
+  passenger_id integer [pk, increment]
+  full_name text [not null]
+  phone text [not null, unique]
+  email text [unique]
+  registration_date text [not null]
+  password_hash text [note: 'filled when password login is added']
+}
+
+Table drivers {
+  driver_id integer [pk, increment]
+  full_name text [not null]
+  phone text [not null, unique]
+  license_number text [not null, unique]
+  rating real [not null, default: 5.0, note: 'CHECK rating BETWEEN 1 AND 5']
+  password_hash text [note: 'filled when password login is added']
+}
+
+Table cars {
+  car_id integer [pk, increment]
+  driver_id integer [not null, ref: > drivers.driver_id]
+  plate_number text [not null, unique]
+  model text [not null]
+  color text
+}
+
+Table rides {
+  ride_id integer [pk, increment]
+  passenger_id integer [not null, ref: > passengers.passenger_id]
+  driver_id integer [not null, ref: > drivers.driver_id]
+  car_id integer [not null, ref: > cars.car_id]
+  pickup_address text [not null]
+  dropoff_address text [not null]
+  start_time text [not null]
+  status text [not null, default: 'requested', note: 'requested / completed / cancelled']
+  price integer [not null, note: 'KZT, CHECK price > 0']
+  ride_rating integer [note: 'CHECK 1 to 5, empty until rated']
+}
+
+Table payments {
+  payment_id integer [pk, increment]
+  ride_id integer [not null, ref: > rides.ride_id]
+  amount integer [not null, note: 'KZT, CHECK amount > 0']
+  method text [not null, note: 'cash / card']
+  payment_status text [not null, note: 'paid / failed']
+  paid_at text [not null]
+}

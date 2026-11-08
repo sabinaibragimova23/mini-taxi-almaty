@@ -28,10 +28,7 @@ SCHEMA_PATH = os.path.join(BASE_DIR, "schema.sql")
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.json.ensure_ascii = False
 
-# ---------------------------------------------------------------------------
-# Almaty places (a lookup list for the UI, not a DB table:
-# RIDES stores only the address text, as in our schema)
-# ---------------------------------------------------------------------------
+
 PLACES = [
     {"id": "airport",   "name": "Almaty Airport",            "district": "Turksib",   "lat": 43.3521, "lng": 77.0405},
     {"id": "almaty1",   "name": "Almaty-1 Station",            "district": "Turksib",   "lat": 43.3405, "lng": 76.9495},
@@ -99,9 +96,7 @@ def quote(pickup_name, dropoff_name, when=None):
     }
 
 
-# ---------------------------------------------------------------------------
-# Database
-# ---------------------------------------------------------------------------
+
 def get_db():
     if "db" not in g:
         g.db = sqlite3.connect(DB_PATH)
@@ -277,9 +272,7 @@ def digits(phone):
     return re.sub(r"\D", "", phone or "")
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+
 PHONE_RE = re.compile(r"^\+?7[\s\-]?\d{3}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}$")
 PLATE_RE = re.compile(r"^\d{3}\s?[A-Z]{3}\s?\d{2}$")
 
@@ -328,9 +321,22 @@ def has_paid(ride_id):
         "SELECT 1 FROM payments WHERE ride_id=? AND payment_status='paid'", (ride_id,)).fetchone() is not None
 
 
-# ---------------------------------------------------------------------------
-# Public
-# ---------------------------------------------------------------------------
+
+def recalc_driver_rating(driver_id):
+    """Set drivers.rating to the average of the driver's ride ratings.
+    If the driver has no ratings yet, the old rating stays."""
+    db = get_db()
+    db.execute("""
+        UPDATE drivers
+        SET rating = COALESCE(
+            (SELECT ROUND(AVG(ride_rating), 1)
+             FROM rides
+             WHERE rides.driver_id = drivers.driver_id
+               AND ride_rating IS NOT NULL),
+            rating)
+        WHERE driver_id = ?""", (driver_id,))
+    db.commit()\
+    
 @app.get("/")
 def index():
     return send_from_directory(app.static_folder, "index.html")

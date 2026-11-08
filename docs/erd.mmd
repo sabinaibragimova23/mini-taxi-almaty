@@ -1,0 +1,47 @@
+erDiagram
+    PASSENGERS ||--o{ RIDES : "orders"
+    DRIVERS ||--o{ CARS : "uses"
+    DRIVERS ||--o{ RIDES : "drives"
+    CARS ||--o{ RIDES : "is used in"
+    RIDES ||--o{ PAYMENTS : "is paid by"
+
+    PASSENGERS {
+        INTEGER passenger_id PK
+        TEXT full_name "NOT NULL"
+        TEXT phone "NOT NULL, UNIQUE"
+        TEXT email "UNIQUE"
+        TEXT registration_date "NOT NULL"
+    }
+    DRIVERS {
+        INTEGER driver_id PK
+        TEXT full_name "NOT NULL"
+        TEXT phone "NOT NULL, UNIQUE"
+        TEXT license_number "NOT NULL, UNIQUE"
+        REAL rating "CHECK 1 to 5"
+    }
+    CARS {
+        INTEGER car_id PK
+        INTEGER driver_id FK "to DRIVERS"
+        TEXT plate_number "NOT NULL, UNIQUE"
+        TEXT model "NOT NULL"
+        TEXT color
+    }
+    RIDES {
+        INTEGER ride_id PK
+        INTEGER passenger_id FK "to PASSENGERS"
+        INTEGER driver_id FK "to DRIVERS"
+        INTEGER car_id FK "to CARS"
+        TEXT pickup_address "NOT NULL"
+        TEXT dropoff_address "NOT NULL"
+        TEXT start_time "NOT NULL"
+        TEXT status "requested, completed, cancelled"
+        INTEGER price "KZT, CHECK > 0"
+    }
+    PAYMENTS {
+        INTEGER payment_id PK
+        INTEGER ride_id FK "to RIDES"
+        INTEGER amount "KZT, CHECK > 0"
+        TEXT method "cash, card"
+        TEXT payment_status "paid, failed"
+        TEXT paid_at "NOT NULL"
+    }
