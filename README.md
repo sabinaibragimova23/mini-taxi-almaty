@@ -23,8 +23,8 @@ role or someone else's ride gets a 403.
 
 | Role | Login | Screens |
 |---|---|---|
-| Passenger | phone number, or "Create an account" | book a taxi on the map, current ride (driver, car, plate), cancel, trip history, pay again if the card failed |
-| Driver | phone number | own profile and cars, the assigned ride with the passenger's phone, complete with cash or card, own earnings by month |
+| Passenger | email or phone + password (demo: `demo123`), or "Create an account" | book a taxi on the map, current ride (driver, car, plate), cancel, trip history, pay again if the card failed |
+| Driver | email or phone + password (demo: `demo123`) | own profile and cars, the assigned ride with the passenger's phone, complete with cash or card, own earnings by month |
 | Admin | password `admin123` (set `ADMIN_PASSWORD` to change it) | all rides, the 5 tables, reports, access table for Section 9 |
 
 The login screen has buttons for a few demo accounts.
@@ -33,8 +33,9 @@ To show it in the presentation, log in as a passenger in one tab and book a ride
 the assigned driver in another tab and complete it. Each tab keeps its own login, and the
 passenger's tab picks up the change within about 5 seconds.
 
-Passengers and drivers log in with a phone number only, since the schema has no password field.
-Adding SMS codes or a password hash column would fix that.
+Passengers and drivers log in with email (or phone) + password. Passwords are stored only as hashes
+(`password_hash`, werkzeug `generate_password_hash`), minimum 6 characters. All demo accounts use `demo123`.
+An existing `taxi.db` is upgraded automatically on start (see `migrations/`).
 
 ## Files
 

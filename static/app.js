@@ -110,7 +110,7 @@ setInterval(() => {
 /* =========================== LOGIN =========================== */
 async function loadLogin() {
   const d = await api("/api/demo-accounts");
-  const chips = list => `<span class="demo-label">Demo accounts:</span>` + list.map(a => `<button type="button" class="chip" data-phone="${esc(a.phone)}">${esc(a.full_name.split(" ")[0])}</button>`).join("");
+  const chips = list => `<span class="demo-label">Demo accounts:</span>` + list.map(a => `<button type="button" class="chip" data-login="${esc(a.email || a.phone)}" data-pass="${esc(d.demo_password)}">${esc(a.full_name.split(" ")[0])}</button>`).join("");
   $('[data-demo="passengers"]').innerHTML = chips(d.passengers);
   $('[data-demo="drivers"]').innerHTML = chips(d.drivers);
   $("#adminHint").innerHTML = d.admin_hint ? `<span class="demo-label">Demo password:</span> <button type="button" class="chip" data-pass="${esc(d.admin_hint)}">${esc(d.admin_hint)}</button>` : "";
@@ -124,7 +124,7 @@ $$(".role-card").forEach(form => {
   form.addEventListener("click", e => {
     const c = e.target.closest(".chip");
     if (!c) return;
-    if (c.dataset.phone) form.phone.value = c.dataset.phone;
+    if (c.dataset.login) form.login.value = c.dataset.login;
     if (c.dataset.pass) form.password.value = c.dataset.pass;
     form.requestSubmit();
   });
@@ -138,7 +138,8 @@ $("#signupBtn").addEventListener("click", () => openModal(`
 function passengerFields() {
   return `<label class="field"><span>full_name</span><input type="text" name="full_name" placeholder="e.g. Aidana Serikova" required></label>
     <label class="field"><span>phone</span><input type="tel" name="phone" placeholder="+7 701 123 45 67" required></label>
-    <label class="field"><span>email</span><input type="email" name="email" placeholder="name@mail.kz"></label>`;
+    <label class="field"><span>email (used to log in)</span><input type="email" name="email" placeholder="name@mail.kz" required></label>
+    <label class="field"><span>password (min 6)</span><input type="password" name="password" minlength="6" autocomplete="new-password" required></label>`;
 }
 
 function openModal(html, onSubmit) {
@@ -467,7 +468,7 @@ document.addEventListener("click", async e => {
 /* =========================== ADMIN: DATABASE =========================== */
 const TABLES = {
   passengers: { desc: "People who order rides", cols: ["passenger_id", "full_name", "phone", "email", "registration_date", "password_hash"], pk: "passenger_id", fk: {}, why: "Passenger details are stored once, not in every ride." },
-  drivers: { desc: "People who drive the cars", cols: ["driver_id", "full_name", "phone", "license_number", "rating", "password_hash"], pk: "driver_id", fk: {}, why: "Driver details and rating are stored once." },
+  drivers: { desc: "People who drive the cars", cols: ["driver_id", "full_name", "phone", "email", "license_number", "rating", "password_hash"], pk: "driver_id", fk: {}, why: "Driver details and rating are stored once." },
   cars: { desc: "Cars used for rides", cols: ["car_id", "driver_id", "plate_number", "model", "color"], pk: "car_id", fk: { driver_id: "DRIVERS" }, why: "A driver can change cars or have two, so car data is kept separately from the driver (see driver 3)." },
   rides: { desc: "One row for every ride", cols: ["ride_id", "passenger_id", "driver_id", "car_id", "pickup_address", "dropoff_address", "start_time", "status", "price", "ride_rating"], pk: "ride_id", fk: { passenger_id: "PASSENGERS", driver_id: "DRIVERS", car_id: "CARS" }, why: "This is the main action. It connects a passenger, a driver and a car." },
   payments: { desc: "Payment for each ride", cols: ["payment_id", "ride_id", "amount", "method", "payment_status", "paid_at"], pk: "payment_id", fk: { ride_id: "RIDES" }, why: "Payment can fail or happen later, so it has its own record." },
@@ -507,8 +508,10 @@ async function renderSide(t, count) {
   if (t === "drivers") form = `
     <label class="field"><span>full_name</span><input type="text" name="full_name" required></label>
     <label class="field"><span>phone</span><input type="tel" name="phone" placeholder="+7 7XX XXX XX XX" required></label>
+    <label class="field"><span>email (used to log in)</span><input type="email" name="email" placeholder="name@taxi.kz" required></label>
     <label class="field"><span>license_number</span><input type="text" name="license_number" placeholder="AA 1234567" required></label>
-    <label class="field"><span>rating (1–5)</span><input type="number" name="rating" min="1" max="5" step="0.1" value="5"></label>`;
+    <label class="field"><span>rating (1–5)</span><input type="number" name="rating" min="1" max="5" step="0.1" value="5"></label>
+    <label class="field"><span>password (min 6)</span><input type="password" name="password" minlength="6" autocomplete="new-password" required></label>`;
   if (t === "cars") {
     const drivers = await api("/api/drivers");
     form = `<label class="field"><span>driver_id → DRIVERS</span><select name="driver_id">${drivers.map(d => `<option value="${d.driver_id}">${d.driver_id} · ${esc(d.full_name)}</option>`).join("")}</select></label>

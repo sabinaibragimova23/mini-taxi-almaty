@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS drivers (
     driver_id      INTEGER PRIMARY KEY AUTOINCREMENT,
     full_name      TEXT    NOT NULL,
     phone          TEXT    NOT NULL UNIQUE,
+    email          TEXT    UNIQUE,
     license_number TEXT    NOT NULL UNIQUE,
     rating         REAL    NOT NULL DEFAULT 5.0 CHECK (rating BETWEEN 1 AND 5),
     password_hash  TEXT
