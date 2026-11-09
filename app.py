@@ -355,9 +355,8 @@ def has_paid(ride_id):
 
 
 
-def recalc_driver_rating(driver_id):
-    """Set drivers.rating to the average of the driver's ride ratings.
-    If the driver has no ratings yet, the old rating stays."""
+def recalc_driver_rating(driver_id, commit=True):
+    """drivers.rating = average of the driver's ride ratings (one decimal)."""
     db = get_db()
     db.execute("""
         UPDATE drivers
@@ -368,7 +367,8 @@ def recalc_driver_rating(driver_id):
                AND ride_rating IS NOT NULL),
             rating)
         WHERE driver_id = ?""", (driver_id,))
-    db.commit()\
+    if commit:
+        db.commit()
     
 @app.get("/")
 def index():
@@ -535,6 +535,38 @@ def cancel_ride(ride_id):
     get_db().commit()
     return jsonify({"ride_id": ride_id, "status": "cancelled"})
 
+@app.post("/api/rides/<int:ride_id>/rate")
+@require("passenger")
+def rate_ride(ride_id):
+    """Passenger rates a completed ride 1..5 (once). Driver rating is recalculated in the same transaction."""
+    raw = body().get("rating")
+    if isinstance(raw, bool) or not isinstance(raw, (int, str)) or not str(raw).strip().isdigit():
+        return bad("Rating must be a whole number from 1 to 5")
+    rating = int(raw)
+    if not 1 <= rating <= 5:
+        return bad("Rating must be a whole number from 1 to 5")
+    ride, err = load_owned_ride(ride_id)
+    if err:
+        return err
+    if ride["status"] != "completed":
+        return bad("Only a completed ride can be rated", 409)
+    if ride["ride_rating"] is not None:
+        return bad("This ride is already rated", 409)
+    db = get_db()
+    try:
+        db.execute("BEGIN")
+        cur = db.execute("UPDATE rides SET ride_rating=? WHERE ride_id=? AND ride_rating IS NULL",
+                         (rating, ride_id))
+        if cur.rowcount != 1:
+            db.rollback()
+            return bad("This ride is already rated", 409)
+        recalc_driver_rating(ride["driver_id"], commit=False)
+        db.commit()
+    except sqlite3.Error:
+        db.rollback()
+        return bad("Transaction error, changes rolled back", 500)
+    new = db.execute("SELECT rating FROM drivers WHERE driver_id=?", (ride["driver_id"],)).fetchone()[0]
+    return jsonify({"ride_id": ride_id, "ride_rating": rating, "driver_rating": new})
 
 # ---------------------------------------------------------------------------
 # DRIVER

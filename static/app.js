@@ -328,6 +328,14 @@ $("#orderForm").addEventListener("submit", async e => {
 });
 
 /* =========================== PASSENGER: MY RIDES =========================== */
+// five clickable stars (rendered 5..1 and reversed with CSS, so hover lights the stars up to the one under the mouse)
+function rateButtons(id) {
+  return `<span class="rate" title="Rate this trip">${[5, 4, 3, 2, 1].map(v =>
+    `<button type="button" data-act="rate" data-id="${id}" data-v="${v}" aria-label="${v} of 5">★</button>`).join("")}</span>`;
+}
+function starsView(n) {
+  return n ? `<span class="stars" title="${n} of 5">${"★".repeat(n)}<span class="off">${"★".repeat(5 - n)}</span></span>` : "—";
+}
 async function loadMyRides() {
   const [rides] = await Promise.all([api("/api/my/rides"), refreshMe()]);
   const s = state.me.stats;
@@ -341,11 +349,12 @@ async function loadMyRides() {
   $("#pActive").innerHTML = (active ? rideBanner(active) : "") + unpaid.map(r => `
     <div class="card alert"><b>Payment for ride #${r.ride_id} failed.</b> ${esc(r.pickup_address)} → ${esc(r.dropoff_address)} · ${money(r.price)}
       <button class="btn primary small" data-act="pay" data-id="${r.ride_id}">Pay again by card</button></div>`).join("");
-  $("#pHistory").innerHTML = `<thead><tr><th>#</th><th>Time</th><th>Route</th><th>Driver</th><th>Car</th><th>Price</th><th>Status</th><th>Payment</th></tr></thead><tbody>${
+  $("#pHistory").innerHTML = `<thead><tr><th>#</th><th>Time</th><th>Route</th><th>Driver</th><th>Car</th><th>Price</th><th>Status</th><th>Payment</th><th>Rating</th></tr></thead><tbody>${
     rides.map(r => `<tr><td>${r.ride_id}</td><td>${esc(r.start_time)}</td><td class="wrap">${esc(r.pickup_address)} → ${esc(r.dropoff_address)}</td>
       <td>${esc(r.driver_name)}</td><td>${esc(r.car_model)}</td><td><b>${money(r.price)}</b></td><td>${badge(r.status)}</td>
-      <td>${r.last_payment_status ? badge(r.last_payment_status) + ` <span class="muted">${LABEL_TXT[r.last_payment_method]}</span>` : "—"}</td></tr>`).join("")
-    || '<tr><td colspan="8" class="muted">No trips yet</td></tr>'}</tbody>`;
+      <td>${r.last_payment_status ? badge(r.last_payment_status) + ` <span class="muted">${LABEL_TXT[r.last_payment_method]}</span>` : "—"}</td>
+      <td>${r.status !== "completed" ? "—" : r.ride_rating ? starsView(r.ride_rating) : rateButtons(r.ride_id)}</td></tr>`).join("")
+    || '<tr><td colspan="9" class="muted">No trips yet</td></tr>'}</tbody>`;
 }
 
 /* =========================== DRIVER: ORDERS =========================== */
@@ -375,10 +384,11 @@ async function loadOrders() {
     <div class="card alert"><b>Ride #${r.ride_id}: card declined.</b> ${esc(r.passenger_name)} · ${money(r.price)}
       <button class="btn primary small" data-act="pay" data-id="${r.ride_id}">Got cash</button></div>`).join("");
   const done = rides.filter(r => r.status !== "requested");
-  $("#dHistory").innerHTML = `<thead><tr><th>#</th><th>Time</th><th>Passenger</th><th>Route</th><th>Car</th><th>Price</th><th>Status</th><th>Payment</th></tr></thead><tbody>${
+  $("#dHistory").innerHTML = `<thead><tr><th>#</th><th>Time</th><th>Passenger</th><th>Route</th><th>Car</th><th>Price</th><th>Status</th><th>Payment</th><th>Rating</th></tr></thead><tbody>${
     done.map(r => `<tr><td>${r.ride_id}</td><td>${esc(r.start_time)}</td><td>${esc(r.passenger_name)}</td><td class="wrap">${esc(r.pickup_address)} → ${esc(r.dropoff_address)}</td>
-      <td>${plate(r.plate_number)}</td><td><b>${money(r.price)}</b></td><td>${badge(r.status)}</td><td>${badge(r.last_payment_status) || "—"}</td></tr>`).join("")
-    || '<tr><td colspan="8" class="muted">No rides yet</td></tr>'}</tbody>`;
+      <td>${plate(r.plate_number)}</td><td><b>${money(r.price)}</b></td><td>${badge(r.status)}</td><td>${badge(r.last_payment_status) || "—"}</td>
+      <td>${starsView(r.ride_rating)}</td></tr>`).join("")
+    || '<tr><td colspan="9" class="muted">No rides yet</td></tr>'}</tbody>`;
 }
 
 /* =========================== DRIVER: EARNINGS =========================== */
@@ -421,10 +431,11 @@ async function loadDispatch() {
       <div class="ride-actions"><button class="btn danger small" data-act="cancel" data-id="${r.ride_id}">Cancel ride</button></div></div>`).join("")
     : `<div class="empty">No rides on the way right now.</div>`;
   const list = hist.filter(r => r.status !== "requested" || state.rideFilter);
-  $("#historyTable").innerHTML = `<thead><tr><th>#</th><th>Time</th><th>Passenger</th><th>Driver</th><th>Route</th><th>Price</th><th>Status</th><th>Payment</th></tr></thead><tbody>${
+  $("#historyTable").innerHTML = `<thead><tr><th>#</th><th>Time</th><th>Passenger</th><th>Driver</th><th>Route</th><th>Price</th><th>Status</th><th>Payment</th><th>Rating</th></tr></thead><tbody>${
     list.map(r => `<tr><td>${r.ride_id}</td><td>${esc(r.start_time)}</td><td>${esc(r.passenger_name)}</td><td>${esc(r.driver_name)}</td>
       <td class="wrap">${esc(r.pickup_address)} → ${esc(r.dropoff_address)}</td><td><b>${money(r.price)}</b></td><td>${badge(r.status)}</td>
-      <td>${r.last_payment_status ? badge(r.last_payment_status) + ` <span class="muted">${LABEL_TXT[r.last_payment_method]}</span>` : "—"}</td></tr>`).join("")}</tbody>`;
+      <td>${r.last_payment_status ? badge(r.last_payment_status) + ` <span class="muted">${LABEL_TXT[r.last_payment_method]}</span>` : "—"}</td>
+      <td>${starsView(r.ride_rating)}</td></tr>`).join("")}</tbody>`;
 }
 $("#rideFilter").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
@@ -457,6 +468,9 @@ document.addEventListener("click", async e => {
       await api(`/api/rides/${id}/cancel`, { method: "POST" });
       if (state.view === "book") hadActive = null;
       toast(`Ride #${id} cancelled`);
+    } else if (b.dataset.act === "rate") {
+      const r = await api(`/api/rides/${id}/rate`, { method: "POST", body: { rating: Number(b.dataset.v) } });
+      toast(`Thanks! Rated ${r.ride_rating}/5 · driver rating now ${Number(r.driver_rating).toFixed(1)}`);
     } else if (b.dataset.act === "pay") {
       const r = await api(`/api/rides/${id}/pay`, { method: "POST" });
       toast(`Ride #${id} paid by ${r.method}`);

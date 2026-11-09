@@ -331,3 +331,9 @@ table.matrix code { font-family: var(--mono); color: var(--navy); font-weight: 6
   .user-chip { margin-left: 0; }
   .user-chip .who small { display: none; }
 }
+
+.stars .off { color: var(--line); }
+.rate { display: inline-flex; flex-direction: row-reverse; gap: 2px; }
+.rate button { background: none; border: 0; padding: 0 1px; font-size: 20px; line-height: 1; color: var(--line); cursor: pointer; transition: color .12s, transform .12s; }
+.rate button:hover, .rate button:hover ~ button, .rate button:focus-visible, .rate button:focus-visible ~ button { color: var(--orange-2); }
+.rate button:hover { transform: scale(1.15); }
