@@ -9,7 +9,7 @@ Open: http://127.0.0.1:5000
 Database: taxi.db (created automatically from schema.sql + demo data).
 Reset: delete taxi.db and run again (or the admin "Reset demo data" button).
 
-Roles: passenger and driver log in by phone, admin by password
+Roles: passenger and driver log in by email (or phone) + password, admin by password
 (ADMIN_PASSWORD env variable, default: admin123).
 """
 import math
@@ -20,10 +20,19 @@ import sqlite3
 from datetime import datetime, timedelta
 
 from flask import Flask, g, jsonify, request, send_from_directory
+from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "taxi.db")
 SCHEMA_PATH = os.path.join(BASE_DIR, "schema.sql")
+
+DEMO_PASSWORD = "demo123"  # password of all demo passengers and drivers
+MIN_PASSWORD_LEN = 6
+DEMO_DRIVER_EMAILS = {  # used only to upgrade an old taxi.db
+    "+7 701 555 20 11": "bauyrzhan.t@taxi.kz", "+7 707 412 87 30": "nursultan.i@taxi.kz",
+    "+7 775 300 64 92": "yerzhan.m@taxi.kz", "+7 702 909 15 43": "gulnara.a@taxi.kz",
+    "+7 747 616 02 58": "ruslan.p@taxi.kz", "+7 778 140 39 07": "askhat.b@taxi.kz",
+}
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.json.ensure_ascii = False
@@ -126,8 +135,29 @@ def init_db(force=False):
         con.executescript(f.read())
     if fresh:
         seed(con)
+    else:
+        migrate_auth(con)
     con.commit()
     con.close()
+
+
+def migrate_auth(con):
+    """Upgrade an existing taxi.db: password_hash / ride_rating columns (migration 001),
+    drivers.email (migration 002), and give users without a password the demo password."""
+    def cols(table):
+        return [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
+    for table in ("passengers", "drivers"):
+        if "password_hash" not in cols(table):
+            con.execute(f"ALTER TABLE {table} ADD COLUMN password_hash TEXT")
+        con.execute(f"UPDATE {table} SET password_hash=? WHERE password_hash IS NULL OR password_hash=''",
+                    (generate_password_hash(DEMO_PASSWORD),))
+    if "ride_rating" not in cols("rides"):
+        con.execute("ALTER TABLE rides ADD COLUMN ride_rating INTEGER CHECK (ride_rating BETWEEN 1 AND 5)")
+    if "email" not in cols("drivers"):
+        con.execute("ALTER TABLE drivers ADD COLUMN email TEXT")
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_email ON drivers(email)")
+        for phone, mail in DEMO_DRIVER_EMAILS.items():
+            con.execute("UPDATE drivers SET email=? WHERE phone=?", (mail, phone))
 
 
 def seed(con):
@@ -140,21 +170,24 @@ def seed(con):
         ("Aliya Nurlanova", "+7 708 645 73 19", "aliya.n@inbox.kz", "2026-07-03"),
         ("Timur Kim", "+7 702 581 09 66", "timur.kim@gmail.com", "2026-08-11"),
         ("Sabina Utegen", "+7 771 403 28 75", "sabina.u@mail.kz", "2026-09-01"),
-        ("Yerlan Omarov", "+7 776 290 31 48", None, "2026-09-18"),
+        ("Yerlan Omarov", "+7 776 290 31 48", "yerlan.o@mail.kz", "2026-09-18"),
     ]
+    demo_hash = generate_password_hash(DEMO_PASSWORD)
     con.executemany(
-        "INSERT INTO passengers(full_name, phone, email, registration_date) VALUES (?,?,?,?)", passengers)
+        "INSERT INTO passengers(full_name, phone, email, registration_date, password_hash) VALUES (?,?,?,?,?)",
+        [p + (demo_hash,) for p in passengers])
 
     drivers = [
-        ("Bauyrzhan Tulegenov", "+7 701 555 20 11", "AA 0412776", 4.9),
-        ("Nursultan Issayev", "+7 707 412 87 30", "AB 1180934", 4.8),
-        ("Yerzhan Mussin", "+7 775 300 64 92", "AA 0938125", 4.7),
-        ("Gulnara Akhmetova", "+7 702 909 15 43", "AC 2203418", 4.9),
-        ("Ruslan Pak", "+7 747 616 02 58", "AB 0771260", 4.6),
-        ("Askhat Baizhanov", "+7 778 140 39 07", "AA 1546603", 4.5),
+        ("Bauyrzhan Tulegenov", "+7 701 555 20 11", "bauyrzhan.t@taxi.kz", "AA 0412776", 4.9),
+        ("Nursultan Issayev", "+7 707 412 87 30", "nursultan.i@taxi.kz", "AB 1180934", 4.8),
+        ("Yerzhan Mussin", "+7 775 300 64 92", "yerzhan.m@taxi.kz", "AA 0938125", 4.7),
+        ("Gulnara Akhmetova", "+7 702 909 15 43", "gulnara.a@taxi.kz", "AC 2203418", 4.9),
+        ("Ruslan Pak", "+7 747 616 02 58", "ruslan.p@taxi.kz", "AB 0771260", 4.6),
+        ("Askhat Baizhanov", "+7 778 140 39 07", "askhat.b@taxi.kz", "AA 1546603", 4.5),
     ]
     con.executemany(
-        "INSERT INTO drivers(full_name, phone, license_number, rating) VALUES (?,?,?,?)", drivers)
+        "INSERT INTO drivers(full_name, phone, email, license_number, rating, password_hash) VALUES (?,?,?,?,?,?)",
+        [d + (demo_hash,) for d in drivers])
 
     # Driver 3 has two cars: the Section 3 example of why CARS is separate
     cars = [
@@ -361,9 +394,10 @@ def demo_accounts():
     """Demo only: a few accounts to click on the login screen."""
     db = get_db()
     return jsonify({
-        "passengers": rows(db.execute("SELECT full_name, phone FROM passengers ORDER BY passenger_id LIMIT 3")),
-        "drivers": rows(db.execute("SELECT full_name, phone FROM drivers ORDER BY driver_id LIMIT 3")),
+        "passengers": rows(db.execute("SELECT full_name, phone, email FROM passengers ORDER BY passenger_id LIMIT 3")),
+        "drivers": rows(db.execute("SELECT full_name, phone, email FROM drivers ORDER BY driver_id LIMIT 3")),
         "admin_hint": ADMIN_PASSWORD if ADMIN_PASSWORD == "admin123" else None,
+        "demo_password": DEMO_PASSWORD,
     })
 
 
@@ -387,13 +421,26 @@ def login():
     if role not in ("passenger", "driver"):
         return bad("Unknown role")
     table, key = ("passengers", "passenger_id") if role == "passenger" else ("drivers", "driver_id")
-    want = digits(b.get("phone"))
-    if len(want) < 10:
-        return bad("Enter your phone number")
-    for r in db.execute(f"SELECT {key} AS id, full_name, phone FROM {table}"):
-        if digits(r["phone"])[-10:] == want[-10:]:
-            return issue(role, r["id"], r["full_name"])
-    return bad(("No passenger" if role == "passenger" else "No driver") + " with this phone number", 404)
+    ident = (b.get("login") or b.get("phone") or "").strip()
+    password = b.get("password") or ""
+    if not ident:
+        return bad("Enter your email or phone number")
+    if not password:
+        return bad("Enter your password")
+    if "@" in ident:
+        r = db.execute(f"SELECT {key} AS id, full_name, password_hash FROM {table} WHERE lower(email)=lower(?)",
+                       (ident,)).fetchone()
+    else:
+        want, r = digits(ident), None
+        if len(want) >= 10:
+            for row in db.execute(f"SELECT {key} AS id, full_name, phone, password_hash FROM {table}"):
+                if digits(row["phone"])[-10:] == want[-10:]:
+                    r = row
+                    break
+    if r and r["password_hash"] and check_password_hash(r["password_hash"], password):
+        return issue(role, r["id"], r["full_name"])
+    # same message for "no such user" and "wrong password": do not reveal which accounts exist
+    return bad("Wrong email/phone or password", 401)
 
 
 @app.post("/api/signup")
@@ -405,8 +452,9 @@ def signup():
         return err
     try:
         cur = get_db().execute(
-            "INSERT INTO passengers(full_name, phone, email, registration_date) VALUES (?,?,?,date('now'))",
-            (b["full_name"].strip(), b["phone"].strip(), (b.get("email") or "").strip() or None))
+            "INSERT INTO passengers(full_name, phone, email, registration_date, password_hash) VALUES (?,?,?,date('now'),?)",
+            (b["full_name"].strip(), b["phone"].strip(), (b.get("email") or "").strip() or None,
+             generate_password_hash(b["password"])))
         get_db().commit()
     except sqlite3.IntegrityError:
         return bad("A passenger with this phone or email already exists", 409)
@@ -422,7 +470,7 @@ def me():
         p = db.execute("SELECT * FROM passengers WHERE passenger_id=?", (u["id"],)).fetchone()
         if not p:
             return bad("Account no longer exists", 401)
-        out["profile"] = dict(p)
+        out["profile"] = {k: v for k, v in dict(p).items() if k != "password_hash"}
         out["stats"] = dict(db.execute("""
             SELECT COUNT(*) AS rides,
                    COALESCE(SUM(CASE WHEN status='completed' THEN price END),0) AS spent
@@ -431,7 +479,7 @@ def me():
         d = db.execute("SELECT * FROM drivers WHERE driver_id=?", (u["id"],)).fetchone()
         if not d:
             return bad("Account no longer exists", 401)
-        out["profile"] = dict(d)
+        out["profile"] = {k: v for k, v in dict(d).items() if k != "password_hash"}
         out["cars"] = rows(db.execute("SELECT * FROM cars WHERE driver_id=? ORDER BY car_id", (u["id"],)))
     return jsonify(out)
 
@@ -600,8 +648,10 @@ def validate_passenger(b):
         return bad("Enter the passenger's name")
     if not PHONE_RE.match(phone):
         return bad("Phone format: +7 7XX XXX XX XX")
-    if email and "@" not in email:
-        return bad("Invalid email")
+    if not email or "@" not in email:
+        return bad("Enter a valid email")
+    if len(b.get("password") or "") < MIN_PASSWORD_LEN:
+        return bad(f"Password must be at least {MIN_PASSWORD_LEN} characters")
     return None
 
 
@@ -609,7 +659,9 @@ def validate_passenger(b):
 @require("admin")
 def list_passengers():
     return jsonify(rows(get_db().execute("""
-        SELECT p.*, (SELECT COUNT(*) FROM rides r WHERE r.passenger_id=p.passenger_id) AS rides_count
+        SELECT p.passenger_id, p.full_name, p.phone, p.email, p.registration_date,
+               (p.password_hash IS NOT NULL AND p.password_hash != '') AS password_hash,
+               (SELECT COUNT(*) FROM rides r WHERE r.passenger_id=p.passenger_id) AS rides_count
         FROM passengers p ORDER BY p.passenger_id""")))
 
 
@@ -622,8 +674,9 @@ def add_passenger():
         return err
     try:
         cur = get_db().execute(
-            "INSERT INTO passengers(full_name, phone, email, registration_date) VALUES (?,?,?,date('now'))",
-            (b["full_name"].strip(), b["phone"].strip(), (b.get("email") or "").strip() or None))
+            "INSERT INTO passengers(full_name, phone, email, registration_date, password_hash) VALUES (?,?,?,date('now'),?)",
+            (b["full_name"].strip(), b["phone"].strip(), (b.get("email") or "").strip() or None,
+             generate_password_hash(b["password"])))
         get_db().commit()
     except sqlite3.IntegrityError:
         return bad("A passenger with this phone or email already exists", 409)
@@ -634,7 +687,8 @@ def add_passenger():
 @require("admin")
 def list_drivers():
     return jsonify(rows(get_db().execute("""
-        SELECT d.*,
+        SELECT d.driver_id, d.full_name, d.phone, d.email, d.license_number, d.rating,
+               (d.password_hash IS NOT NULL AND d.password_hash != '') AS password_hash,
           (SELECT COUNT(*) FROM cars c WHERE c.driver_id=d.driver_id) AS cars_count,
           (SELECT COUNT(*) FROM rides r WHERE r.driver_id=d.driver_id AND r.status='completed') AS rides_done,
           EXISTS (SELECT 1 FROM rides r WHERE r.driver_id=d.driver_id AND r.status='requested') AS busy
@@ -646,6 +700,7 @@ def list_drivers():
 def add_driver():
     b = body()
     name, phone, lic = (b.get("full_name") or "").strip(), (b.get("phone") or "").strip(), (b.get("license_number") or "").strip().upper()
+    email = (b.get("email") or "").strip()
     try:
         rating = float(b.get("rating") or 5)
     except ValueError:
@@ -654,17 +709,21 @@ def add_driver():
         return bad("Enter the driver's name")
     if not PHONE_RE.match(phone):
         return bad("Phone format: +7 7XX XXX XX XX")
+    if not email or "@" not in email:
+        return bad("Enter a valid email")
     if len(lic) < 5:
         return bad("Enter the driving license number")
     if not 1 <= rating <= 5:
         return bad("Rating must be a number from 1 to 5")
+    if len(b.get("password") or "") < MIN_PASSWORD_LEN:
+        return bad(f"Password must be at least {MIN_PASSWORD_LEN} characters")
     try:
         cur = get_db().execute(
-            "INSERT INTO drivers(full_name, phone, license_number, rating) VALUES (?,?,?,?)",
-            (name, phone, lic, rating))
+            "INSERT INTO drivers(full_name, phone, email, license_number, rating, password_hash) VALUES (?,?,?,?,?,?)",
+            (name, phone, email, lic, rating, generate_password_hash(b["password"])))
         get_db().commit()
     except sqlite3.IntegrityError:
-        return bad("A driver with this phone or license already exists", 409)
+        return bad("A driver with this phone, email or license already exists", 409)
     return jsonify({"driver_id": cur.lastrowid}), 201
 
 

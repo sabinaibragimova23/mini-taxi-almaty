@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiniTaxi · Almaty</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231F4E79'/><path d='M4 24 L12 12 L16 17 L21 9 L28 24Z' fill='%23FFF2CC'/><circle cx='24' cy='8' r='3' fill='%23E07A2E'/></svg>">
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <a class="brand" href="#">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32"><path d="M3 25 L11 12 L15.5 17.5 L21 8 L29 25Z" fill="currentColor"/><circle cx="24.5" cy="7" r="3" fill="var(--orange)"/></svg>
+      </span>
+      <span class="brand-text">MiniTaxi<small id="brandRole">Almaty</small></span>
+    </a>
+    <nav class="tabs" id="tabs"></nav>
+    <div class="user-chip" id="userChip" hidden></div>
+  </div>
+  <svg class="ridge" viewBox="0 0 1440 120" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 120 L0 78 L90 52 L170 70 L260 30 L330 58 L420 18 L500 50 L580 36 L660 64 L760 22 L840 46 L930 8 L1010 44 L1100 30 L1180 60 L1270 26 L1360 52 L1440 40 L1440 120Z" fill="var(--blue)" opacity=".35"/>
+    <path d="M0 120 L0 96 L120 74 L210 90 L300 62 L400 86 L520 58 L610 84 L720 54 L820 80 L930 48 L1040 82 L1150 60 L1250 86 L1350 66 L1440 80 L1440 120Z" fill="var(--bg)"/>
+    <path d="M920 50 L930 8 L942 30 Z M412 34 L420 18 L430 30Z M752 36 L760 22 L770 34Z" fill="#fff" opacity=".85"/>
+  </svg>
+</header>
+
+<main>
+  <!-- ======================= LOGIN ======================= -->
+  <section class="view" id="view-login">
+    <div class="login-head">
+      <h1>Log in</h1>
+      <p class="muted">Choose your role. Passengers, drivers and the admin each have their own screens.</p>
+    </div>
+    <div class="roles">
+      <form class="card role-card" data-role="passenger">
+        <h2>Passenger</h2>
+        <p class="muted">Book a taxi and see your trips.</p>
+        <label class="field"><span>Email or phone</span><input type="text" name="login" placeholder="name@mail.kz or +7 7XX XXX XX XX" autocomplete="username" required></label>
+        <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
+        <button class="btn primary">Log in</button>
+        <div class="demo" data-demo="passengers"></div>
+        <button type="button" class="link" id="signupBtn">Create an account</button>
+      </form>
+      <form class="card role-card" data-role="driver">
+        <h2>Driver</h2>
+        <p class="muted">Complete assigned rides and see your earnings.</p>
+        <label class="field"><span>Email or phone</span><input type="text" name="login" placeholder="name@mail.kz or +7 7XX XXX XX XX" autocomplete="username" required></label>
+        <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
+        <button class="btn blue">Log in</button>
+        <div class="demo" data-demo="drivers"></div>
+      </form>
+      <form class="card role-card" data-role="admin">
+        <h2>Admin</h2>
+        <p class="muted">Tables, rides and monthly reports.</p>
+        <label class="field"><span>Password</span><input type="password" name="password" required></label>
+        <button class="btn dark">Log in</button>
+        <div class="demo" id="adminHint"></div>
+      </form>
+    </div>
+    <p class="tip">You can log in as a passenger in one tab and as a driver in another.</p>
+  </section>
+
+  <!-- ======================= PASSENGER: BOOK ======================= -->
+  <section class="view" id="view-book">
+    <div id="activeBanner"></div>
+    <div class="order-grid">
+      <form class="card order-card" id="orderForm" autocomplete="off">
+        <h1 id="greeting">Where to?</h1>
+        <p class="muted">Choose on the map or from the list.</p>
+        <div class="route">
+          <div class="route-line" aria-hidden="true"><i class="dot a"></i><i class="bar"></i><i class="dot b"></i></div>
+          <div class="route-fields">
+            <label class="field"><span>From</span><select id="pickupSelect" required></select></label>
+            <button type="button" class="swap" id="swapBtn" title="Swap" aria-label="Swap">⇅</button>
+            <label class="field"><span>To</span><select id="dropoffSelect" required></select></label>
+          </div>
+        </div>
+        <div class="quote" id="quoteBox"><div class="quote-empty">Choose a route to see the price</div></div>
+        <button class="btn primary big" type="submit" id="orderBtn">Book a taxi</button>
+        <p class="hint">Pay by cash or card at the end of the ride.</p>
+      </form>
+      <div class="card map-card">
+        <div class="map-head">
+          <strong>Almaty map</strong>
+          <span class="legend"><i class="dot a"></i>pickup <i class="dot b"></i>drop-off</span>
+        </div>
+        <svg id="map" viewBox="0 0 800 560" role="img" aria-label="Almaty map with pickup points"></svg>
+        <p class="map-tip" id="mapTip">Click the pickup point, then the drop-off point</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= PASSENGER: MY RIDES ======================= -->
+  <section class="view" id="view-myrides">
+    <div class="stats three" id="pStats"></div>
+    <div id="pActive"></div>
+    <div class="section-head"><h2>My trips</h2></div>
+    <div class="card table-wrap"><table class="data" id="pHistory"></table></div>
+  </section>
+
+  <!-- ======================= DRIVER: ORDERS ======================= -->
+  <section class="view" id="view-orders">
+    <div class="driver-head card" id="dHead"></div>
+    <div id="dActive"></div>
+    <div id="dUnpaid"></div>
+    <div class="section-head"><h2>My completed rides</h2></div>
+    <div class="card table-wrap"><table class="data" id="dHistory"></table></div>
+  </section>
+
+  <!-- ======================= DRIVER: EARNINGS ======================= -->
+  <section class="view" id="view-earnings">
+    <div class="section-head">
+      <h2>My earnings</h2>
+      <p class="muted">You see your own earnings and your place among drivers, not other drivers' numbers.</p>
+    </div>
+    <div id="dEarn"></div>
+  </section>
+
+  <!-- ======================= ADMIN: DISPATCH ======================= -->
+  <section class="view" id="view-dispatch">
+    <div class="stats" id="stats"></div>
+    <div class="section-head">
+      <h2>Rides on the way</h2>
+      <p class="muted">Drivers complete rides themselves. The admin can cancel a ride if needed.</p>
+    </div>
+    <div class="active-list" id="activeRides"></div>
+    <div class="section-head with-filter">
+      <h2>All rides</h2>
+      <div class="seg" id="rideFilter">
+        <button data-s="" class="active">All</button>
+        <button data-s="completed">Completed</button>
+        <button data-s="cancelled">Cancelled</button>
+      </div>
+    </div>
+    <div class="card table-wrap"><table class="data" id="historyTable"></table></div>
+  </section>
+
+  <!-- ======================= ADMIN: DATABASE ======================= -->
+  <section class="view" id="view-db">
+    <div class="section-head">
+      <h2>Tables</h2>
+      <p class="muted">One table per entity: passengers, drivers, cars, rides, payments.</p>
+    </div>
+    <div class="erd" id="erd"></div>
+    <div class="seg big-seg" id="tableTabs">
+      <button data-t="passengers" class="active">PASSENGERS</button>
+      <button data-t="drivers">DRIVERS</button>
+      <button data-t="cars">CARS</button>
+      <button data-t="rides">RIDES</button>
+      <button data-t="payments">PAYMENTS</button>
+    </div>
+    <div class="db-grid">
+      <div class="card table-wrap"><table class="data mono" id="dbTable"></table></div>
+      <aside class="card side" id="dbSide"></aside>
+    </div>
+  </section>
+
+  <!-- ======================= ADMIN: REPORTS ======================= -->
+  <section class="view" id="view-reports">
+    <div class="section-head with-filter">
+      <div>
+        <h2>Driver earnings per month</h2>
+        <p class="muted">The driver with the highest earnings gets the monthly bonus.</p>
+      </div>
+      <select id="monthSelect"></select>
+    </div>
+    <div class="report-grid">
+      <div class="card" id="earnings"></div>
+      <div class="card sql-card">
+        <div class="sql-head"><strong>SQL query</strong><button class="btn ghost small" id="copySql">Copy</button></div>
+        <pre id="sqlBox"></pre>
+      </div>
+    </div>
+    <div class="report-grid three">
+      <div class="card" id="topPickups"></div>
+      <div class="card" id="methods"></div>
+      <div class="card" id="unpaid"></div>
+    </div>
+  </section>
+
+  <!-- ======================= ADMIN: ACCESS ======================= -->
+  <section class="view" id="view-access">
+    <div class="section-head">
+      <h2>Who can access which tables</h2>
+      <p class="muted">Section 9 of our database plan.</p>
+    </div>
+    <div class="card table-wrap"><table class="data matrix" id="matrix"></table></div>
+    <div class="report-grid three" style="margin-top:16px">
+      <div class="card info"><h3>Sensitive data we store</h3>
+        <ul><li>Phone numbers and emails of passengers</li><li>Phone numbers and license numbers of drivers</li><li>Payment history</li></ul>
+        <p class="muted">Drivers see a passenger's phone only during the ride.</p></div>
+      <div class="card info"><h3>Transaction example</h3>
+        <p>Completing a ride runs two statements together:</p>
+        <ol><li><code>UPDATE rides SET status='completed'</code></li><li><code>INSERT INTO payments …</code></li></ol>
+        <p class="muted">If either fails, both are rolled back, so a ride can't be completed without a payment record.</p></div>
+      <div class="card info"><h3>Limitation</h3>
+        <p>Passengers and drivers log in with a phone number only. Our schema has no password field.</p>
+        <p class="muted">To fix: SMS codes or a password hash column.</p></div>
+    </div>
+    <div class="section-head"><h2>Project areas</h2></div>
+    <div class="areas" id="areas"></div>
+    <div class="rule">
+      <strong>Whole-team rule</strong>
+      <p>Everyone works every week and understands the whole Information System: what each major part does, why it exists, and how it connects to the system.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <span>MiniTaxi Almaty, student project (Task 9)</span>
+  <button class="link" id="resetBtn" hidden>Reset demo data</button>
+</footer>
+
+<dialog id="modal"><form method="dialog" id="modalForm"></form></dialog>
+<div class="toast" id="toast" role="status"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
