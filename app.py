@@ -153,6 +153,8 @@ def migrate_auth(con):
                     (generate_password_hash(DEMO_PASSWORD),))
     if "ride_rating" not in cols("rides"):
         con.execute("ALTER TABLE rides ADD COLUMN ride_rating INTEGER CHECK (ride_rating BETWEEN 1 AND 5)")
+    if "ride_comment" not in cols("rides"):
+        con.execute("""ALTER TABLE rides ADD COLUMN ride_comment TEXT CHECK (ride_comment IS NULL OR length(ride_comment) <= 1000) """)
     if "email" not in cols("drivers"):
         con.execute("ALTER TABLE drivers ADD COLUMN email TEXT")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_email ON drivers(email)")
@@ -538,35 +540,86 @@ def cancel_ride(ride_id):
 @app.post("/api/rides/<int:ride_id>/rate")
 @require("passenger")
 def rate_ride(ride_id):
-    """Passenger rates a completed ride 1..5 (once). Driver rating is recalculated in the same transaction."""
-    raw = body().get("rating")
+    """Passenger rates a completed ride and optionally leaves a comment."""
+
+    b = body()
+
+    # Validate rating
+    raw = b.get("rating")
+
     if isinstance(raw, bool) or not isinstance(raw, (int, str)) or not str(raw).strip().isdigit():
         return bad("Rating must be a whole number from 1 to 5")
+
     rating = int(raw)
+
     if not 1 <= rating <= 5:
         return bad("Rating must be a whole number from 1 to 5")
+
+    # Validate comment
+    comment = b.get("comment", "")
+
+    if comment is None:
+        comment = ""
+
+    if not isinstance(comment, str):
+        return bad("Comment must be text")
+
+    comment = comment.strip()
+
+    if len(comment) > 1000:
+        return bad("Comment must not exceed 1000 characters")
+
+    # Comments are required for ratings from 1 to 3
+    if rating <= 3 and not comment:
+        return bad("Please explain what you did not like about the ride")
+
+    # Check ride ownership and status
     ride, err = load_owned_ride(ride_id)
+
     if err:
         return err
+
     if ride["status"] != "completed":
         return bad("Only a completed ride can be rated", 409)
+
     if ride["ride_rating"] is not None:
         return bad("This ride is already rated", 409)
+
     db = get_db()
+
     try:
         db.execute("BEGIN")
-        cur = db.execute("UPDATE rides SET ride_rating=? WHERE ride_id=? AND ride_rating IS NULL",
-                         (rating, ride_id))
+
+        cur = db.execute("""
+            UPDATE rides
+            SET ride_rating = ?, ride_comment = ?
+            WHERE ride_id = ? AND ride_rating IS NULL
+        """, (rating, comment or None, ride_id))
+
         if cur.rowcount != 1:
             db.rollback()
             return bad("This ride is already rated", 409)
+
+        # Recalculate driver's average rating
         recalc_driver_rating(ride["driver_id"], commit=False)
+
         db.commit()
+
     except sqlite3.Error:
         db.rollback()
         return bad("Transaction error, changes rolled back", 500)
-    new = db.execute("SELECT rating FROM drivers WHERE driver_id=?", (ride["driver_id"],)).fetchone()[0]
-    return jsonify({"ride_id": ride_id, "ride_rating": rating, "driver_rating": new})
+
+    new = db.execute(
+        "SELECT rating FROM drivers WHERE driver_id=?",
+        (ride["driver_id"],)
+    ).fetchone()[0]
+
+    return jsonify({
+        "ride_id": ride_id,
+        "ride_rating": rating,
+        "ride_comment": comment or None,
+        "driver_rating": new
+    })
 
 # ---------------------------------------------------------------------------
 # DRIVER

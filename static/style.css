@@ -337,3 +337,49 @@ table.matrix code { font-family: var(--mono); color: var(--navy); font-weight: 6
 .rate button { background: none; border: 0; padding: 0 1px; font-size: 20px; line-height: 1; color: var(--line); cursor: pointer; transition: color .12s, transform .12s; }
 .rate button:hover, .rate button:hover ~ button, .rate button:focus-visible, .rate button:focus-visible ~ button { color: var(--orange-2); }
 .rate button:hover { transform: scale(1.15); }
+
+/* ---------- Ride rating comment ---------- */
+
+.rating-comment-form {
+  min-width: 220px;
+  max-width: 300px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.rating-comment-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.rating-comment-input {
+  display: block;
+  width: 100%;
+  min-height: 75px;
+  padding: 10px;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+  outline: none;
+}
+
+.rating-comment-input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(68,114,196,.15);
+}
+
+.rating-comment-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}

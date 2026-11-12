@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS rides (
     status          TEXT    NOT NULL DEFAULT 'requested'
                     CHECK (status IN ('requested','completed','cancelled')),
     price           INTEGER NOT NULL CHECK (price > 0),
-    ride_rating     INTEGER CHECK (ride_rating BETWEEN 1 AND 5)
+    ride_rating     INTEGER CHECK (ride_rating BETWEEN 1 AND 5),
+    ride_comment    TEXT CHECK (ride_comment IS NULL OR length(ride_comment) <= 1000)
 );
 
 CREATE TABLE IF NOT EXISTS payments (
