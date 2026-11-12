@@ -338,6 +338,9 @@ function starsView(n) {
 }
 async function loadMyRides() {
   const [rides] = await Promise.all([api("/api/my/rides"), refreshMe()]);
+
+  // Do not refresh the history while the passenger is writing a comment
+  if (document.querySelector(".rating-comment-form")) return;
   const s = state.me.stats;
   const active = rides.find(r => r.status === "requested");
   setCount(active ? 1 : 0);
@@ -349,12 +352,31 @@ async function loadMyRides() {
   $("#pActive").innerHTML = (active ? rideBanner(active) : "") + unpaid.map(r => `
     <div class="card alert"><b>Payment for ride #${r.ride_id} failed.</b> ${esc(r.pickup_address)} → ${esc(r.dropoff_address)} · ${money(r.price)}
       <button class="btn primary small" data-act="pay" data-id="${r.ride_id}">Pay again by card</button></div>`).join("");
-  $("#pHistory").innerHTML = `<thead><tr><th>#</th><th>Time</th><th>Route</th><th>Driver</th><th>Car</th><th>Price</th><th>Status</th><th>Payment</th><th>Rating</th></tr></thead><tbody>${
-    rides.map(r => `<tr><td>${r.ride_id}</td><td>${esc(r.start_time)}</td><td class="wrap">${esc(r.pickup_address)} → ${esc(r.dropoff_address)}</td>
-      <td>${esc(r.driver_name)}</td><td>${esc(r.car_model)}</td><td><b>${money(r.price)}</b></td><td>${badge(r.status)}</td>
+  $("#pHistory").innerHTML = `<thead><tr>
+    <th>#</th>
+    <th>Time</th>
+    <th>Route</th>
+    <th>Driver</th>
+    <th>Car</th>
+    <th>Price</th>
+    <th>Status</th>
+    <th>Payment</th>
+    <th>Rating</th>
+    <th>Comment</th>
+  </tr></thead><tbody>${
+    rides.map(r => `<tr>
+      <td>${r.ride_id}</td>
+      <td>${esc(r.start_time)}</td>
+      <td class="wrap">${esc(r.pickup_address)} → ${esc(r.dropoff_address)}</td>
+      <td>${esc(r.driver_name)}</td>
+      <td>${esc(r.car_model)}</td>
+      <td><b>${money(r.price)}</b></td>
+      <td>${badge(r.status)}</td>
       <td>${r.last_payment_status ? badge(r.last_payment_status) + ` <span class="muted">${LABEL_TXT[r.last_payment_method]}</span>` : "—"}</td>
-      <td>${r.status !== "completed" ? "—" : r.ride_rating ? starsView(r.ride_rating) : rateButtons(r.ride_id)}</td></tr>`).join("")
-    || '<tr><td colspan="9" class="muted">No trips yet</td></tr>'}</tbody>`;
+      <td>${r.status !== "completed" ? "—" : r.ride_rating ? starsView(r.ride_rating) : rateButtons(r.ride_id)}</td>
+      <td class="wrap">${r.ride_comment ? esc(r.ride_comment) : "—"}</td>
+    </tr>`).join("")
+    || '<tr><td colspan="10" class="muted">No trips yet</td></tr>'}</tbody>`;
 }
 
 /* =========================== DRIVER: ORDERS =========================== */
@@ -431,11 +453,13 @@ async function loadDispatch() {
       <div class="ride-actions"><button class="btn danger small" data-act="cancel" data-id="${r.ride_id}">Cancel ride</button></div></div>`).join("")
     : `<div class="empty">No rides on the way right now.</div>`;
   const list = hist.filter(r => r.status !== "requested" || state.rideFilter);
-  $("#historyTable").innerHTML = `<thead><tr><th>#</th><th>Time</th><th>Passenger</th><th>Driver</th><th>Route</th><th>Price</th><th>Status</th><th>Payment</th><th>Rating</th></tr></thead><tbody>${
+  $("#historyTable").innerHTML = `<thead><tr><th>#</th><th>Time</th><th>Passenger</th><th>Driver</th><th>Route</th><th>Price</th><th>Status</th><th>Payment</th><th>Rating</th><th>Comment</th></tr></thead><tbody>${
     list.map(r => `<tr><td>${r.ride_id}</td><td>${esc(r.start_time)}</td><td>${esc(r.passenger_name)}</td><td>${esc(r.driver_name)}</td>
       <td class="wrap">${esc(r.pickup_address)} → ${esc(r.dropoff_address)}</td><td><b>${money(r.price)}</b></td><td>${badge(r.status)}</td>
       <td>${r.last_payment_status ? badge(r.last_payment_status) + ` <span class="muted">${LABEL_TXT[r.last_payment_method]}</span>` : "—"}</td>
-      <td>${starsView(r.ride_rating)}</td></tr>`).join("")}</tbody>`;
+      <td>${starsView(r.ride_rating)}</td>
+      <td class="wrap">${r.ride_comment ? esc(r.ride_comment) : "—"}</td>
+      </tr>`).join("")}</tbody>`;
 }
 $("#rideFilter").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
@@ -455,28 +479,146 @@ function setCount(n) {
 document.addEventListener("click", async e => {
   const b = e.target.closest("[data-act]");
   if (!b) return;
+
   const id = b.dataset.id;
+  const action = b.dataset.act;
+
+  // If passenger selects rating 1-3, show comment form
+  if (action === "rate") {
+    const rating = Number(b.dataset.v);
+    const required = rating <= 3;
+    const cell = b.closest("td");
+
+    cell.innerHTML = `
+      <div class="rating-comment-form">
+        <label class="rating-comment-label">
+          ${required
+            ? "What didn't you like about the ride?"
+            : "Would you like to leave a comment?"}
+        </label>
+
+        <textarea
+          class="rating-comment-input"
+          maxlength="1000"
+          rows="3"
+          placeholder="${required
+            ? "Please explain your experience..."
+            : "Share your experience..."}"
+        ></textarea>
+
+        <div class="rating-comment-actions">
+          <button
+            type="button"
+            class="btn primary small"
+            data-act="submit-rating"
+            data-id="${id}"
+            data-v="${rating}"
+          >
+            Submit
+          </button>
+
+          <button
+            type="button"
+            class="btn ghost small"
+            data-act="cancel-rating"
+            data-id="${id}"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    `;
+
+    cell.querySelector("textarea").focus();
+    return;
+  }
+
+  // Cancel comment form
+  if (action === "cancel-rating") {
+  document.querySelector(".rating-comment-form")?.remove();
+  LOADERS[state.view]?.();
+  return;
+}
+
   b.disabled = true;
+
   try {
-    if (b.dataset.act === "complete") {
-      await api(`/api/rides/${id}/complete`, { method: "POST", body: { method: b.dataset.m } });
+    if (action === "complete") {
+      await api(`/api/rides/${id}/complete`, {
+        method: "POST",
+        body: { method: b.dataset.m }
+      });
+
       toast(`Ride #${id} completed, payment saved`);
-    } else if (b.dataset.act === "fail") {
-      await api(`/api/rides/${id}/complete`, { method: "POST", body: { method: "card", simulate_fail: true } });
-      toast(`Card declined, saved in PAYMENTS as failed`, true);
-    } else if (b.dataset.act === "cancel") {
-      await api(`/api/rides/${id}/cancel`, { method: "POST" });
+
+    } else if (action === "fail") {
+      await api(`/api/rides/${id}/complete`, {
+        method: "POST",
+        body: { method: "card", simulate_fail: true }
+      });
+
+      toast("Card declined, saved in PAYMENTS as failed", true);
+
+    } else if (action === "cancel") {
+      await api(`/api/rides/${id}/cancel`, {
+        method: "POST"
+      });
+
       if (state.view === "book") hadActive = null;
+
       toast(`Ride #${id} cancelled`);
-    } else if (b.dataset.act === "rate") {
-      const r = await api(`/api/rides/${id}/rate`, { method: "POST", body: { rating: Number(b.dataset.v) } });
+
+    } else if (action === "rate") {
+      // Ratings 4-5 can be submitted immediately
+      const r = await api(`/api/rides/${id}/rate`, {
+        method: "POST",
+        body: {
+          rating: Number(b.dataset.v),
+          comment: ""
+        }
+      });
+
       toast(`Thanks! Rated ${r.ride_rating}/5 · driver rating now ${Number(r.driver_rating).toFixed(1)}`);
-    } else if (b.dataset.act === "pay") {
-      const r = await api(`/api/rides/${id}/pay`, { method: "POST" });
+
+    } else if (action === "submit-rating") {
+      // Get comment from textarea
+      const cell = b.closest("td");
+      const textarea = cell.querySelector("textarea");
+      const comment = textarea.value.trim();
+
+      if (!comment && Number(b.dataset.v) <= 3) {
+        toast("Please enter a comment", true);
+        textarea.focus();
+        b.disabled = false;
+        return;
+      }
+
+      const r = await api(`/api/rides/${id}/rate`, {
+        method: "POST",
+        body: {
+          rating: Number(b.dataset.v),
+          comment: comment
+        }
+      });
+
+      toast(`Thanks! Rated ${r.ride_rating}/5 · driver rating now ${Number(r.driver_rating).toFixed(1)}`);
+
+    } else if (action === "pay") {
+      const r = await api(`/api/rides/${id}/pay`, {
+        method: "POST"
+      });
+
       toast(`Ride #${id} paid by ${r.method}`);
     }
+
+    document.querySelector(".rating-comment-form")?.remove();
+
     LOADERS[state.view]?.();
-  } catch (err) { toast(err.message, true); b.disabled = false; }
+
+  } catch (err) {
+    toast(err.message, true);
+    b.disabled = false;
+  }
 });
 
 /* =========================== ADMIN: DATABASE =========================== */
@@ -484,7 +626,7 @@ const TABLES = {
   passengers: { desc: "People who order rides", cols: ["passenger_id", "full_name", "phone", "email", "registration_date", "password_hash"], pk: "passenger_id", fk: {}, why: "Passenger details are stored once, not in every ride." },
   drivers: { desc: "People who drive the cars", cols: ["driver_id", "full_name", "phone", "email", "license_number", "rating", "password_hash"], pk: "driver_id", fk: {}, why: "Driver details and rating are stored once." },
   cars: { desc: "Cars used for rides", cols: ["car_id", "driver_id", "plate_number", "model", "color"], pk: "car_id", fk: { driver_id: "DRIVERS" }, why: "A driver can change cars or have two, so car data is kept separately from the driver (see driver 3)." },
-  rides: { desc: "One row for every ride", cols: ["ride_id", "passenger_id", "driver_id", "car_id", "pickup_address", "dropoff_address", "start_time", "status", "price", "ride_rating"], pk: "ride_id", fk: { passenger_id: "PASSENGERS", driver_id: "DRIVERS", car_id: "CARS" }, why: "This is the main action. It connects a passenger, a driver and a car." },
+  rides: { desc: "One row for every ride", cols: ["ride_id", "passenger_id", "driver_id", "car_id", "pickup_address", "dropoff_address", "start_time", "status", "price", "ride_rating", "ride_comment"], pk: "ride_id", fk: { passenger_id: "PASSENGERS", driver_id: "DRIVERS", car_id: "CARS" }, why: "This is the main action. It connects a passenger, a driver and a car." },
   payments: { desc: "Payment for each ride", cols: ["payment_id", "ride_id", "amount", "method", "payment_status", "paid_at"], pk: "payment_id", fk: { ride_id: "RIDES" }, why: "Payment can fail or happen later, so it has its own record." },
 };
 
