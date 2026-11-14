@@ -44,3 +44,21 @@ SET rating = COALESCE(
        AND ride_rating IS NOT NULL),
     rating)
 WHERE driver_id = 1;
+-- 6) Who is online right now, and since when
+SELECT d.driver_id, d.full_name, s.started_at AS online_since
+FROM driver_shifts s
+JOIN drivers d ON d.driver_id = s.driver_id
+WHERE s.ended_at IS NULL
+ORDER BY s.started_at;
+
+-- 7) Hours online per driver over the last 7 days (an open shift counts until now)
+SELECT d.driver_id,
+       d.full_name,
+       COUNT(s.shift_id) AS shifts,
+       ROUND(SUM(julianday(COALESCE(s.ended_at, strftime('%Y-%m-%d %H:%M', 'now', 'localtime')))
+                 - julianday(s.started_at)) * 24, 1) AS hours
+FROM driver_shifts s
+JOIN drivers d ON d.driver_id = s.driver_id
+WHERE s.started_at >= strftime('%Y-%m-%d %H:%M', 'now', 'localtime', '-7 days')
+GROUP BY d.driver_id
+ORDER BY hours DESC;

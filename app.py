@@ -137,6 +137,7 @@ def init_db(force=False):
         seed(con)
     else:
         migrate_auth(con)
+        migrate_shifts(con)
     con.commit()
     con.close()
 
@@ -160,6 +161,14 @@ def migrate_auth(con):
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_email ON drivers(email)")
         for phone, mail in DEMO_DRIVER_EMAILS.items():
             con.execute("UPDATE drivers SET email=? WHERE phone=?", (mail, phone))
+
+
+def migrate_shifts(con):
+    """Migration 004 on an existing taxi.db: schema.sql has just created driver_shifts.
+    If it is still empty, put every driver online once, so booking keeps working."""
+    if con.execute("SELECT COUNT(*) FROM driver_shifts").fetchone()[0] == 0:
+        con.execute("""INSERT INTO driver_shifts(driver_id, started_at)
+                       SELECT driver_id, ? FROM drivers""", (datetime.now().strftime("%Y-%m-%d %H:%M"),))
 
 
 def seed(con):
@@ -242,6 +251,19 @@ def seed(con):
                 method = "cash"
             con.execute("""INSERT INTO payments(ride_id, amount, method, payment_status, paid_at)
                            VALUES (?,?,?,?,?)""", (ride_id, q["price"], method, "paid", paid_at))
+
+    # Driver shifts: 14 days of history, then drivers 1-5 online now, driver 6 offline
+    for driver_id in range(1, 7):
+        for days_ago in range(14, 0, -1):
+            if rnd.random() < 0.75:
+                day = (now - timedelta(days=days_ago)).replace(minute=0, second=0, microsecond=0)
+                started = day.replace(hour=rnd.choice([7, 8, 9, 10, 14]))
+                ended = started + timedelta(hours=rnd.randint(4, 10))
+                con.execute("INSERT INTO driver_shifts(driver_id, started_at, ended_at) VALUES (?,?,?)",
+                            (driver_id, started.strftime("%Y-%m-%d %H:%M"), ended.strftime("%Y-%m-%d %H:%M")))
+    for driver_id in range(1, 6):
+        con.execute("INSERT INTO driver_shifts(driver_id, started_at) VALUES (?,?)",
+                    (driver_id, (now - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M")))
 
 
 # ---------------------------------------------------------------------------
@@ -483,6 +505,9 @@ def me():
             return bad("Account no longer exists", 401)
         out["profile"] = {k: v for k, v in dict(d).items() if k != "password_hash"}
         out["cars"] = rows(db.execute("SELECT * FROM cars WHERE driver_id=? ORDER BY car_id", (u["id"],)))
+        shift = open_shift(u["id"])
+        out["online"] = shift is not None
+        out["online_since"] = shift["started_at"] if shift else None
     return jsonify(out)
 
 
@@ -508,14 +533,15 @@ def book_ride():
         q = quote(b.get("pickup"), b.get("dropoff"))
     except ValueError as e:
         return bad(str(e))
-    # a free driver with a car, highest rating first
+    # an online, free driver with a car, highest rating first
     pick = db.execute("""
         SELECT d.driver_id, c.car_id FROM drivers d
         JOIN cars c ON c.driver_id = d.driver_id
         WHERE NOT EXISTS (SELECT 1 FROM rides r WHERE r.driver_id=d.driver_id AND r.status='requested')
+          AND EXISTS (SELECT 1 FROM driver_shifts s WHERE s.driver_id=d.driver_id AND s.ended_at IS NULL)
         ORDER BY d.rating DESC, RANDOM() LIMIT 1""").fetchone()
     if not pick:
-        return bad("All drivers are busy right now. Please try again in a few minutes.", 409)
+        return bad("All drivers are busy or offline right now. Please try again in a few minutes.", 409)
     cur = db.execute("""INSERT INTO rides(passenger_id, driver_id, car_id, pickup_address, dropoff_address,
                                           start_time, status, price)
                         VALUES (?,?,?,?,?,?, 'requested', ?)""",
@@ -624,6 +650,39 @@ def rate_ride(ride_id):
 # ---------------------------------------------------------------------------
 # DRIVER
 # ---------------------------------------------------------------------------
+def open_shift(driver_id):
+    """The driver's current shift, or None if the driver is offline."""
+    return get_db().execute(
+        "SELECT * FROM driver_shifts WHERE driver_id=? AND ended_at IS NULL", (driver_id,)).fetchone()
+
+
+@app.post("/api/driver/online")
+@require("driver")
+def go_online():
+    """Driver starts a shift: a new row in DRIVER_SHIFTS with no ended_at."""
+    did = g.user["id"]
+    if open_shift(did):
+        return bad("You are already online", 409)
+    get_db().execute("INSERT INTO driver_shifts(driver_id, started_at) VALUES (?,?)", (did, now_str()))
+    get_db().commit()
+    return jsonify({"online": True})
+
+
+@app.post("/api/driver/offline")
+@require("driver")
+def go_offline():
+    """Driver ends the shift: ended_at gets the current time."""
+    did, db = g.user["id"], get_db()
+    shift = open_shift(did)
+    if not shift:
+        return bad("You are already offline", 409)
+    if db.execute("SELECT 1 FROM rides WHERE driver_id=? AND status='requested'", (did,)).fetchone():
+        return bad("Finish your current ride before going offline", 409)
+    db.execute("UPDATE driver_shifts SET ended_at=? WHERE shift_id=?", (now_str(), shift["shift_id"]))
+    db.commit()
+    return jsonify({"online": False})
+
+
 @app.get("/api/driver/rides")
 @require("driver")
 def driver_rides():
@@ -719,7 +778,9 @@ def api_stats():
         "payments": one("SELECT COUNT(*) FROM payments"),
         "active_rides": one("SELECT COUNT(*) FROM rides WHERE status='requested'"),
         "free_drivers": one("""SELECT COUNT(*) FROM drivers d WHERE EXISTS (SELECT 1 FROM cars c WHERE c.driver_id=d.driver_id)
-                               AND NOT EXISTS (SELECT 1 FROM rides r WHERE r.driver_id=d.driver_id AND r.status='requested')"""),
+                               AND NOT EXISTS (SELECT 1 FROM rides r WHERE r.driver_id=d.driver_id AND r.status='requested')
+                               AND EXISTS (SELECT 1 FROM driver_shifts s WHERE s.driver_id=d.driver_id AND s.ended_at IS NULL)"""),
+        "online_drivers": one("SELECT COUNT(*) FROM driver_shifts WHERE ended_at IS NULL"),
         "month_revenue": db.execute(
             "SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_status='paid' AND strftime('%Y-%m',paid_at)=?",
             (month,)).fetchone()[0],
@@ -894,6 +955,33 @@ def report_earnings():
                                                 AND p.payment_status='paid')"""))
     return jsonify({"month": month, "months": months, "sql": EARNINGS_SQL, "rows": data,
                     "top_pickups": places, "methods": methods, "unpaid": unpaid})
+
+
+@app.get("/api/driver_shifts")
+@require("admin")
+def list_shifts():
+    return jsonify(rows(get_db().execute(
+        "SELECT * FROM driver_shifts ORDER BY (ended_at IS NULL) DESC, started_at DESC LIMIT 300")))
+
+
+HOURS_SQL = """SELECT d.driver_id,
+       d.full_name,
+       COUNT(s.shift_id) AS shifts,
+       ROUND(SUM(julianday(COALESCE(s.ended_at, :now)) - julianday(s.started_at)) * 24, 1) AS hours
+FROM driver_shifts s
+JOIN drivers d ON d.driver_id = s.driver_id
+WHERE s.started_at >= :since
+GROUP BY d.driver_id
+ORDER BY hours DESC;"""
+
+
+@app.get("/api/reports/driver-hours")
+@require("admin")
+def report_hours():
+    """Hours online per driver over the last 7 days (an open shift counts until now)."""
+    since = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M")
+    data = rows(get_db().execute(HOURS_SQL, {"now": now_str(), "since": since}))
+    return jsonify({"since": since, "sql": HOURS_SQL, "rows": data})
 
 
 @app.post("/api/reset")

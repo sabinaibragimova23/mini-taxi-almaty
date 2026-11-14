@@ -56,3 +56,16 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE INDEX IF NOT EXISTS idx_rides_passenger ON rides(passenger_id);
 CREATE INDEX IF NOT EXISTS idx_rides_driver    ON rides(driver_id);
 CREATE INDEX IF NOT EXISTS idx_payments_ride   ON payments(ride_id);
+
+-- Driver shifts: a driver is "online" while they have a shift with no ended_at
+CREATE TABLE IF NOT EXISTS driver_shifts (
+    shift_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    driver_id  INTEGER NOT NULL REFERENCES drivers(driver_id),
+    started_at TEXT    NOT NULL,
+    ended_at   TEXT,                                  -- empty while the driver is online
+    CHECK (ended_at IS NULL OR ended_at >= started_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shifts_driver ON driver_shifts(driver_id);
+-- a driver can have only ONE open shift at a time
+CREATE UNIQUE INDEX IF NOT EXISTS one_open_shift_per_driver ON driver_shifts(driver_id) WHERE ended_at IS NULL;

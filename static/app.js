@@ -389,7 +389,8 @@ async function loadOrders() {
     <div><div class="muted" style="font-size:13px">driver #${p.driver_id} · license ${esc(p.license_number)}</div>
       <h2>${esc(p.full_name)} <span class="stars">★ ${Number(p.rating).toFixed(1)}</span></h2></div>
     <div class="cars">${cars.map(c => `<div class="car">${plate(c.plate_number)}<span>${esc(c.model)} · ${esc(c.color || "")}</span></div>`).join("")}</div>
-    <div class="status ${active ? "busy" : "free"}"><i></i>${active ? "On a ride" : "Online · waiting"}</div>`;
+    <div class="status ${active ? "busy" : state.me.online ? "free" : "off"}"><i></i>${active ? "On a ride" : state.me.online ? "Online · waiting" : "Offline"}</div>
+    <button class="btn ${state.me.online ? "ghost" : "primary"}" data-act="${state.me.online ? "offline" : "online"}">${state.me.online ? "Go offline" : "Go online"}</button>`;
   $("#dActive").innerHTML = active ? `
     <div class="card order-now">
       <div class="order-top"><span class="ride-id">ride #${active.ride_id} · ${esc(active.start_time)}</span><span class="ride-price">${money(active.price)}</span></div>
@@ -400,7 +401,9 @@ async function loadOrders() {
         <button class="btn blue" data-act="complete" data-id="${active.ride_id}" data-m="card">Complete · card</button>
         <button class="btn ghost" data-act="fail" data-id="${active.ride_id}" title="Simulate a declined card">Card declined</button>
       </div></div>`
-    : `<div class="empty waiting"><span class="pulse"></span><b>No order yet</b><br>Rides go to the free driver with the highest rating.</div>`;
+    : state.me.online
+      ? `<div class="empty waiting"><span class="pulse"></span><b>No order yet</b><br>Rides go to the online driver with the highest rating.</div>`
+      : `<div class="empty waiting"><b>You are offline</b><br>Press Go online to start getting orders.</div>`;
   const unpaid = rides.filter(r => r.status === "completed" && r.last_payment_status === "failed");
   $("#dUnpaid").innerHTML = unpaid.map(r => `
     <div class="card alert"><b>Ride #${r.ride_id}: card declined.</b> ${esc(r.passenger_name)} · ${money(r.price)}
@@ -440,7 +443,7 @@ async function loadDispatch() {
   ]);
   setCount(s.active_rides);
   $("#stats").innerHTML = `
-    <div class="stat"><b>${s.free_drivers} / ${s.drivers}</b><span>drivers available</span></div>
+    <div class="stat"><b>${s.free_drivers} / ${s.online_drivers}</b><span>free / online drivers (of ${s.drivers})</span></div>
     <div class="stat"><b>${s.active_rides}</b><span>rides on the way now</span></div>
     <div class="stat"><b>${s.rides}</b><span>rides total · ${s.passengers} passengers</span></div>
     <div class="stat accent"><b>${money(s.month_revenue)}</b><span>revenue this month</span></div>`;
@@ -609,6 +612,14 @@ document.addEventListener("click", async e => {
       });
 
       toast(`Ride #${id} paid by ${r.method}`);
+
+    } else if (action === "online") {
+      await api("/api/driver/online", { method: "POST" });
+      toast("You are online. New orders can come to you.");
+
+    } else if (action === "offline") {
+      await api("/api/driver/offline", { method: "POST" });
+      toast("You are offline. You will not get new orders.");
     }
 
     document.querySelector(".rating-comment-form")?.remove();
@@ -627,6 +638,7 @@ const TABLES = {
   drivers: { desc: "People who drive the cars", cols: ["driver_id", "full_name", "phone", "email", "license_number", "rating", "password_hash"], pk: "driver_id", fk: {}, why: "Driver details and rating are stored once." },
   cars: { desc: "Cars used for rides", cols: ["car_id", "driver_id", "plate_number", "model", "color"], pk: "car_id", fk: { driver_id: "DRIVERS" }, why: "A driver can change cars or have two, so car data is kept separately from the driver (see driver 3)." },
   rides: { desc: "One row for every ride", cols: ["ride_id", "passenger_id", "driver_id", "car_id", "pickup_address", "dropoff_address", "start_time", "status", "price", "ride_rating", "ride_comment"], pk: "ride_id", fk: { passenger_id: "PASSENGERS", driver_id: "DRIVERS", car_id: "CARS" }, why: "This is the main action. It connects a passenger, a driver and a car." },
+  driver_shifts: { desc: "When each driver was online", cols: ["shift_id", "driver_id", "started_at", "ended_at"], pk: "shift_id", fk: { driver_id: "DRIVERS" }, why: "A driver is online while their shift has no ended_at. Only online drivers get orders." },
   payments: { desc: "Payment for each ride", cols: ["payment_id", "ride_id", "amount", "method", "payment_status", "paid_at"], pk: "payment_id", fk: { ride_id: "RIDES" }, why: "Payment can fail or happen later, so it has its own record." },
 };
 
@@ -722,6 +734,14 @@ async function loadReports() {
     ${r.unpaid.length ? `<ul class="mini-list">${r.unpaid.map(u => `<li><span>ride #${u.ride_id}</span><b>${money(u.price)}</b></li>`).join("")}</ul>
       <p class="muted" style="font-size:13px;margin-top:10px">Waiting for a second payment.</p>`
       : '<p class="muted">No unpaid rides.</p>'}`;
+  const h = await api("/api/reports/driver-hours");
+  const maxH = Math.max(1, ...h.rows.map(x => x.hours));
+  $("#hours").innerHTML = `<h3>Hours online, last 7 days</h3><div class="muted" style="font-size:13px">From DRIVER_SHIFTS. An open shift counts until now.</div>
+    <div class="bars">${h.rows.map(x => `<div class="bar-row">
+      <div class="name">${esc(x.full_name)}<small>${x.shifts} shifts</small></div>
+      <div class="bar-track"><div class="bar-fill" style="width:0" data-w="${(x.hours / maxH) * 100}%"></div></div>
+      <div class="val">${x.hours} h</div></div>`).join("") || '<p class="muted">No shifts in the last 7 days</p>'}</div>`;
+  requestAnimationFrame(() => $$("#hours .bar-fill").forEach(el => (el.style.width = el.dataset.w)));
 }
 $("#monthSelect").addEventListener("change", loadReports);
 
@@ -731,6 +751,7 @@ const MATRIX = [
   ["DRIVERS", "Name, phone, rating of own assigned driver", "Own profile", "Read all, add"],
   ["CARS", "Model, color, plate of own assigned car", "Own cars", "Read all, add"],
   ["RIDES", "Own rides: create, cancel while active", "Own assigned rides: complete", "Read all, cancel"],
+  ["DRIVER_SHIFTS", "No access", "Own shifts: go online / offline", "Read all, hours report"],
   ["PAYMENTS", "Own rides: pay again by card", "Own rides: create payment (cash/card)", "Read all, reports"],
 ];
 const AREAS = [

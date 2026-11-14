@@ -45,3 +45,16 @@ UPDATE rides SET ride_rating = 6 WHERE ride_id = 1;
 -- 8. A correct rating is accepted
 UPDATE rides SET ride_rating = 5 WHERE ride_id = 1;
 -- expected: no error, 1 row changed
+
+-- 9. UNIQUE (partial index): a driver cannot have two open shifts at once
+--    (driver 1 is online in the demo data)
+INSERT INTO driver_shifts (driver_id, started_at) VALUES (1, '2026-11-14 12:00');
+-- expected: UNIQUE constraint failed: driver_shifts.driver_id
+
+-- 10. CHECK: a shift cannot end before it starts
+INSERT INTO driver_shifts (driver_id, started_at, ended_at) VALUES (6, '2026-11-14 12:00', '2026-11-14 09:00');
+-- expected: CHECK constraint failed
+
+-- 11. FOREIGN KEY: a shift for a driver that does not exist
+INSERT INTO driver_shifts (driver_id, started_at) VALUES (99, '2026-11-14 12:00');
+-- expected: FOREIGN KEY constraint failed

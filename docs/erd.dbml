@@ -6,16 +6,17 @@ Table passengers {
   phone text [not null, unique]
   email text [unique]
   registration_date text [not null]
-  password_hash text [note: 'filled when password login is added']
+  password_hash text [note: 'hashed password (werkzeug), never plain text']
 }
 
 Table drivers {
   driver_id integer [pk, increment]
   full_name text [not null]
   phone text [not null, unique]
+  email text [unique]
   license_number text [not null, unique]
-  rating real [not null, default: 5.0, note: 'CHECK rating BETWEEN 1 AND 5']
-  password_hash text [note: 'filled when password login is added']
+  rating real [not null, default: 5.0, note: 'CHECK 1 to 5; average of ride ratings']
+  password_hash text [note: 'hashed password (werkzeug), never plain text']
 }
 
 Table cars {
@@ -37,6 +38,7 @@ Table rides {
   status text [not null, default: 'requested', note: 'requested / completed / cancelled']
   price integer [not null, note: 'KZT, CHECK price > 0']
   ride_rating integer [note: 'CHECK 1 to 5, empty until rated']
+  ride_comment text [note: 'up to 1000 characters']
 }
 
 Table payments {
@@ -46,4 +48,15 @@ Table payments {
   method text [not null, note: 'cash / card']
   payment_status text [not null, note: 'paid / failed']
   paid_at text [not null]
+}
+
+Table driver_shifts {
+  shift_id integer [pk, increment]
+  driver_id integer [not null, ref: > drivers.driver_id]
+  started_at text [not null]
+  ended_at text [note: 'empty while the driver is online; CHECK ended_at >= started_at']
+
+  indexes {
+    driver_id [unique, note: 'only where ended_at IS NULL: one open shift per driver']
+  }
 }

@@ -2,6 +2,7 @@ erDiagram
     PASSENGERS ||--o{ RIDES : "orders"
     DRIVERS ||--o{ CARS : "uses"
     DRIVERS ||--o{ RIDES : "drives"
+    DRIVERS ||--o{ DRIVER_SHIFTS : "works"
     CARS ||--o{ RIDES : "is used in"
     RIDES ||--o{ PAYMENTS : "is paid by"
 
@@ -11,13 +12,16 @@ erDiagram
         TEXT phone "NOT NULL, UNIQUE"
         TEXT email "UNIQUE"
         TEXT registration_date "NOT NULL"
+        TEXT password_hash "hashed"
     }
     DRIVERS {
         INTEGER driver_id PK
         TEXT full_name "NOT NULL"
         TEXT phone "NOT NULL, UNIQUE"
+        TEXT email "UNIQUE"
         TEXT license_number "NOT NULL, UNIQUE"
         REAL rating "CHECK 1 to 5"
+        TEXT password_hash "hashed"
     }
     CARS {
         INTEGER car_id PK
@@ -36,6 +40,8 @@ erDiagram
         TEXT start_time "NOT NULL"
         TEXT status "requested, completed, cancelled"
         INTEGER price "KZT, CHECK > 0"
+        INTEGER ride_rating "CHECK 1 to 5"
+        TEXT ride_comment "max 1000 chars"
     }
     PAYMENTS {
         INTEGER payment_id PK
@@ -44,4 +50,10 @@ erDiagram
         TEXT method "cash, card"
         TEXT payment_status "paid, failed"
         TEXT paid_at "NOT NULL"
+    }
+    DRIVER_SHIFTS {
+        INTEGER shift_id PK
+        INTEGER driver_id FK "to DRIVERS"
+        TEXT started_at "NOT NULL"
+        TEXT ended_at "empty while online"
     }

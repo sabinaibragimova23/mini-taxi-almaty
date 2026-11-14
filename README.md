@@ -55,6 +55,8 @@ An existing `taxi.db` is upgraded automatically on start (see `migrations/`).
 | POST | /api/rides | passenger | book `{pickup, dropoff}` |
 | POST | /api/rides/:id/cancel | passenger (own), admin | cancel an active ride |
 | GET | /api/driver/rides, /api/driver/earnings | driver | own rides, own earnings |
+| POST | /api/driver/online, /api/driver/offline | driver | start / end a shift |
+| GET | /api/driver_shifts, /api/reports/driver-hours | admin | all shifts, hours online per driver (7 days) |
 | POST | /api/rides/:id/complete | driver (own) | complete + payment `{method}` in one transaction |
 | POST | /api/rides/:id/pay | passenger / driver (own) | pay again by card / record cash |
 | GET/POST | /api/passengers, /api/drivers, /api/cars | admin | list / add |
@@ -70,6 +72,7 @@ Medeu / Shymbulak: +600 ₸. Night (23:00–06:00): ×1.2.
 
 - A driver has only one active ride at a time (status = requested).
 - A passenger has only one active ride at a time.
+- Only drivers who are online (an open shift in DRIVER_SHIFTS) get new orders. A driver cannot go offline during a ride.
 - If all drivers are busy, the ride is not created (error 409).
 - Only an active ride can be completed or cancelled.
 - You can't create a car for a driver that doesn't exist (FK), or a ride for a passenger that doesn't exist.
