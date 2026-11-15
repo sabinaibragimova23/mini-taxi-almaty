@@ -242,11 +242,12 @@ async function loadBook() {
 }
 
 let hadActive = null;
+let rideTimers = {};
+
 async function renderActiveBanner() {
   const rides = await api("/api/my/rides");
   const active = rides.find(r => r.status === "requested");
   setCount(active ? 1 : 0);
-  // ride just finished while we were watching
   if (hadActive && !active) {
     const done = rides.find(r => r.ride_id === hadActive);
     if (done) toast(done.status === "completed" ? `Ride #${done.ride_id} completed, payment ${LABEL_TXT[done.last_payment_status] || ""}` : `Ride #${done.ride_id} ${LABEL_TXT[done.status]}`, done.last_payment_status === "failed");
@@ -258,14 +259,58 @@ async function renderActiveBanner() {
 }
 
 function rideBanner(r) {
-  const eta = 3 + (r.ride_id % 6);
-  return `<div class="card confirm">
-      <div><div class="ride-id">ride #${r.ride_id} · ${esc(r.start_time)} · <span class="live"><i></i>driver on the way</span></div>
-        <h3>${esc(r.driver_name)} <span class="stars">★ ${Number(r.driver_rating).toFixed(1)}</span> <span class="muted" style="font-size:13px;font-weight:500">${esc(r.driver_phone || "")}</span></h3>
-        <div style="margin-top:6px">${esc(r.car_model)}, ${esc(r.car_color || "")} &nbsp;${plate(r.plate_number)}</div>
-        <div class="muted" style="margin-top:6px">${esc(r.pickup_address)} → ${esc(r.dropoff_address)} · <b>${money(r.price)}</b></div></div>
-      <div class="eta">arrives in ~${eta} min<br><button class="btn danger small" data-act="cancel" data-id="${r.ride_id}">Cancel ride</button></div></div>`;
+  const initialEtaMin = 3 + (r.ride_id % 3); 
+  const totalSeconds = initialEtaMin * 60;
+  
+  const storageKey = `ride_start_${r.ride_id}`;
+  let startTime = localStorage.getItem(storageKey);
+  if (!startTime) {
+    startTime = Date.now();
+    localStorage.setItem(storageKey, startTime);
+  } else {
+    startTime = Number(startTime);
+  }
+  
+  const secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
+  const progress = Math.min(100, Math.floor((secondsElapsed / totalSeconds) * 100));
+  
+  const remainingSec = Math.max(0, totalSeconds - secondsElapsed);
+  const currentEta = Math.ceil(remainingSec / 60);
+  
+  const isArrived = progress >= 100 || currentEta === 0;
+  const isCancelLocked = progress >= 80;
+
+  const topStatusText = isArrived 
+    ? 'driver is waiting for you' 
+    : `driver on the way (${progress}% of route)`;
+
+  const lockMessage = isArrived
+    ? 'Driver has arrived'
+    : 'Driver is arriving, please wait';
+
+  return `<div class="card confirm" style="display: flex; justify-content: space-between; align-items: center;">
+    <div style="flex: 1;">
+      <div>
+        <div class="ride-id">ride #${r.ride_id}</div> 
+        ${esc(r.start_time)} 
+        <span class="live"><i></i>${topStatusText}</span>
+      </div>
+      <h3 style="margin: 6px 0;">${esc(r.driver_name)} <span class="stars">★ ${Number(r.driver_rating).toFixed(1)}</span> <span class="muted" style="font-size:12px">(${esc(r.car_model)}, ${esc(r.car_color || "")})  ${plate(r.plate_number)}</span></h3>
+      <div class="muted"><b>${esc(r.pickup_address)}</b> → ${esc(r.dropoff_address)}</div>
+    </div>
+    <div style="text-align: right; min-width: 220px;">
+      <div class="eta" style="margin-bottom: 6px;">${isArrived ? 'Arrived' : `arrives in ~${currentEta} min`}</div>
+      <div>
+        ${isCancelLocked 
+          ? `<span style="color:#d9534f; font-weight:600; font-size:11px;"> ${lockMessage}</span>`
+          : `<button class="btn danger small" data-act="cancel" data-id="${r.ride_id}">Cancel ride</button>`
+        }
+      </div>
+    </div>
+  </div>`;
 }
+
+
 
 async function syncRoute() {
   $("#pickupSelect").value = state.pickup;
