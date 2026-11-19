@@ -58,3 +58,15 @@ INSERT INTO driver_shifts (driver_id, started_at, ended_at) VALUES (6, '2026-11-
 -- 11. FOREIGN KEY: a shift for a driver that does not exist
 INSERT INTO driver_shifts (driver_id, started_at) VALUES (99, '2026-11-14 12:00');
 -- expected: FOREIGN KEY constraint failed
+
+-- 12. CHECK: a price must be more than 0
+UPDATE fare_rules SET amount = -100 WHERE rule_key = 'airport';
+-- expected: CHECK constraint failed
+
+-- 13. CHECK: a multiplier must be between 1 and 3
+UPDATE fare_rules SET amount = 5 WHERE rule_key = 'night';
+-- expected: CHECK constraint failed
+
+-- 14. CHECK: only known kinds of price
+INSERT INTO fare_rules (rule_key, name, kind, amount, applies_to) VALUES ('tips', 'Tips', 'bonus', 100, 'Always');
+-- expected: CHECK constraint failed

@@ -84,6 +84,7 @@
         <div class="quote" id="quoteBox"><div class="quote-empty">Choose a route to see the price</div></div>
         <button class="btn primary big" type="submit" id="orderBtn">Book a taxi</button>
         <p class="hint">Pay by cash or card at the end of the ride.</p>
+        <button type="button" class="btn ghost prices-btn" id="pricesBtn">See all prices and extra charges</button>
       </form>
       <div class="card map-card">
         <div class="map-head">
@@ -93,6 +94,18 @@
         <svg id="map" viewBox="0 0 800 560" role="img" aria-label="Almaty map with pickup points"></svg>
         <p class="map-tip" id="mapTip">Click the pickup point, then the drop-off point</p>
       </div>
+    </div>
+  </section>
+
+  <!-- ======================= ADMIN: PRICES ======================= -->
+  <section class="view" id="view-prices">
+    <div class="section-head">
+      <h2>Prices and extra charges</h2>
+      <p class="muted">Stored in the FARE_RULES table. New bookings use the new price at once; rides already booked keep their saved price.</p>
+    </div>
+    <div class="prices-grid">
+      <div class="card table-wrap"><table class="data" id="priceRules"></table></div>
+      <div class="card side" id="priceExample"></div>
     </div>
   </section>
 
@@ -155,6 +168,7 @@
       <button data-t="rides">RIDES</button>
       <button data-t="payments">PAYMENTS</button>
       <button data-t="driver_shifts">DRIVER_SHIFTS</button>
+      <button data-t="fare_rules">FARE_RULES</button>
     </div>
     <div class="db-grid">
       <div class="card table-wrap"><table class="data mono" id="dbTable"></table></div>
@@ -219,6 +233,10 @@
   <button class="link" id="resetBtn" hidden>Reset demo data</button>
 </footer>
 
+<dialog id="priceDialog" class="price-dialog" aria-labelledby="priceDialogTitle">
+  <button type="button" class="dialog-close" id="priceDialogClose" aria-label="Close">×</button>
+  <div id="pricePanel"></div>
+</dialog>
 <dialog id="modal"><form method="dialog" id="modalForm"></form></dialog>
 <div class="toast" id="toast" role="status"></div>
 

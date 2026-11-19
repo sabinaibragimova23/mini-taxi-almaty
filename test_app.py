@@ -1,4 +1,3 @@
-
 import sqlite3
 import pytest
 import app as taxi_app

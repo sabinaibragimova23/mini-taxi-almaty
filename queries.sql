@@ -62,3 +62,14 @@ JOIN drivers d ON d.driver_id = s.driver_id
 WHERE s.started_at >= strftime('%Y-%m-%d %H:%M', 'now', 'localtime', '-7 days')
 GROUP BY d.driver_id
 ORDER BY hours DESC;
+
+-- 8) All prices the passenger can see right now (the price panel)
+SELECT name, kind, amount, applies_to
+FROM fare_rules
+WHERE active = 1
+ORDER BY rowid;
+
+-- 9) How many rides started or ended at the airport (they pay the airport surcharge)
+SELECT COUNT(*) AS airport_rides, SUM(price) AS total_kzt
+FROM rides
+WHERE pickup_address = 'Almaty Airport' OR dropoff_address = 'Almaty Airport';

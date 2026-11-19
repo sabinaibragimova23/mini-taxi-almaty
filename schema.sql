@@ -69,3 +69,15 @@ CREATE TABLE IF NOT EXISTS driver_shifts (
 CREATE INDEX IF NOT EXISTS idx_shifts_driver ON driver_shifts(driver_id);
 -- a driver can have only ONE open shift at a time
 CREATE UNIQUE INDEX IF NOT EXISTS one_open_shift_per_driver ON driver_shifts(driver_id) WHERE ended_at IS NULL;
+
+-- Fare rules: every price the passenger pays, editable by the admin
+CREATE TABLE IF NOT EXISTS fare_rules (
+    rule_key   TEXT    PRIMARY KEY,                    -- base, per_km, minimum, mountain, airport, night, rush
+    name       TEXT    NOT NULL,
+    kind       TEXT    NOT NULL CHECK (kind IN ('fixed', 'per_km', 'minimum', 'surcharge', 'multiplier')),
+    amount     REAL    NOT NULL CHECK (amount > 0),    -- KZT, or a factor for multipliers
+    applies_to TEXT    NOT NULL,                       -- when the rule is used, in words
+    active     INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    updated_at TEXT,
+    CHECK (kind <> 'multiplier' OR amount BETWEEN 1 AND 3)
+);

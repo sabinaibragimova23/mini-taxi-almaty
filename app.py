@@ -63,12 +63,31 @@ PLACES = [
 PLACE_BY_NAME = {p["name"]: p for p in PLACES}
 
 # Fare (KZT)
-BASE_FARE = 500
-PER_KM = 140
-MIN_FARE = 800
 ROAD_FACTOR = 1.35          # roads are longer than a straight line
-MOUNTAIN_SURCHARGE = 600    # Medeu / Shymbulak are up in the mountains
-NIGHT_FACTOR = 1.2          # 23:00–06:00
+
+# Prices live in the FARE_RULES table, so the admin can change them.
+# These are the starting values for a new database (migration 005).
+DEFAULT_FARE_RULES = [
+    # rule_key, name, kind, amount, applies_to
+    ("base", "Base fare", "fixed", 500, "Every ride"),
+    ("per_km", "Price per km", "per_km", 140, "Every km of the route (straight line x 1.35)"),
+    ("minimum", "Minimum fare", "minimum", 800, "If the ride costs less, the passenger pays this"),
+    ("mountain", "Mountain surcharge", "surcharge", 600, "Pickup or drop-off at Medeu or Shymbulak"),
+    ("airport", "Airport surcharge", "surcharge", 400, "Pickup or drop-off at Almaty Airport"),
+    ("night", "Night fare", "multiplier", 1.2, "23:00 - 06:00"),
+    ("rush", "Rush hour", "multiplier", 1.1, "07:00 - 10:00 and 17:00 - 20:00 on weekdays"),
+]
+CORE_RULES = ("base", "per_km", "minimum")   # always on: cannot be switched off
+
+
+def load_fare_rules(con):
+    """All fare rules from the database as {rule_key: row}."""
+    return {r["rule_key"]: dict(r) for r in con.execute("SELECT * FROM fare_rules")}
+
+
+def insert_default_fares(con):
+    con.executemany("""INSERT OR IGNORE INTO fare_rules(rule_key, name, kind, amount, applies_to)
+                       VALUES (?,?,?,?,?)""", DEFAULT_FARE_RULES)
 
 
 def haversine_km(a, b):
@@ -80,28 +99,61 @@ def haversine_km(a, b):
     return 2 * r * math.asin(math.sqrt(h))
 
 
-def quote(pickup_name, dropoff_name, when=None):
+def quote(pickup_name, dropoff_name, when=None, rules=None):
+    """Price of a ride, calculated from the FARE_RULES table, with a line for every charge."""
     a, b = PLACE_BY_NAME.get(pickup_name), PLACE_BY_NAME.get(dropoff_name)
     if not a or not b:
         raise ValueError("Choose pickup and drop-off points from the list")
     if a is b:
         raise ValueError("Pickup and drop-off are the same place")
     when = when or datetime.now()
+    rules = rules or load_fare_rules(get_db())
+    on = lambda k: k in rules and rules[k]["active"]
+
     km = haversine_km(a, b) * ROAD_FACTOR
-    price = BASE_FARE + PER_KM * km
+    lines = []   # what the passenger sees: every part of the price
+
+    def add(key, label, kzt):
+        lines.append({"rule": key, "label": label, "kzt": int(round(kzt))})
+
+    add("base", rules["base"]["name"], rules["base"]["amount"])
+    add("per_km", f"{round(km, 1)} km x {rules['per_km']['amount']:g} ₸", km * rules["per_km"]["amount"])
+    price = rules["base"]["amount"] + km * rules["per_km"]["amount"]
+
     mountain = a["id"] in ("medeu", "shymbulak") or b["id"] in ("medeu", "shymbulak")
-    if mountain:
-        price += MOUNTAIN_SURCHARGE
+    airport = "airport" in (a["id"], b["id"])
+    if mountain and on("mountain"):
+        add("mountain", rules["mountain"]["name"], rules["mountain"]["amount"])
+        price += rules["mountain"]["amount"]
+    if airport and on("airport"):
+        add("airport", rules["airport"]["name"], rules["airport"]["amount"])
+        price += rules["airport"]["amount"]
+
     night = when.hour >= 23 or when.hour < 6
-    if night:
-        price *= NIGHT_FACTOR
-    price = max(MIN_FARE, int(round(price / 10.0)) * 10)
+    rush = when.weekday() < 5 and (7 <= when.hour < 10 or 17 <= when.hour < 20)
+    for key, applies in (("night", night), ("rush", rush)):
+        if applies and on(key):
+            factor = rules[key]["amount"]
+            add(key, f"{rules[key]['name']} x{factor:g}", price * (factor - 1))
+            price *= factor
+
+    rounded = int(round(price / 10.0)) * 10
+    minimum = rules["minimum"]["amount"]
+    if rounded < minimum:
+        add("minimum", f"{rules['minimum']['name']} {minimum:g} ₸", minimum - sum(l["kzt"] for l in lines))
+        rounded = int(minimum)
+    elif rounded != sum(l["kzt"] for l in lines):
+        lines.append({"rule": None, "label": "Rounded to 10 ₸", "kzt": rounded - sum(l["kzt"] for l in lines)})
+
     return {
         "distance_km": round(km, 1),
         "minutes": max(5, int(round(km / 28 * 60 + 4))),  # ~28 km/h in the city
-        "price": price,
-        "night": night,
-        "mountain": mountain,
+        "price": rounded,
+        "lines": lines,
+        "night": night and on("night"),
+        "rush": rush and on("rush"),
+        "mountain": mountain and on("mountain"),
+        "airport": airport and on("airport"),
     }
 
 
@@ -138,6 +190,7 @@ def init_db(force=False):
     else:
         migrate_auth(con)
         migrate_shifts(con)
+        insert_default_fares(con)   # migration 005: fills fare_rules once
     con.commit()
     con.close()
 
@@ -173,6 +226,9 @@ def migrate_shifts(con):
 
 def seed(con):
     rnd = random.Random(2026)
+    insert_default_fares(con)
+    con.row_factory = sqlite3.Row
+    fare_rules = load_fare_rules(con)
     passengers = [
         ("Aigerim Seitova", "+7 701 214 55 10", "aigerim.s@mail.kz", "2026-03-02"),
         ("Daniyar Abenov", "+7 705 330 12 87", "daniyar.abenov@gmail.com", "2026-04-15"),
@@ -233,7 +289,7 @@ def seed(con):
             when = now - timedelta(hours=rnd.randint(3, 48))
         driver_id = rnd.randint(1, 6)
         car_id = rnd.choice(car_ids_by_driver[driver_id])
-        q = quote(pickup, dropoff, when)
+        q = quote(pickup, dropoff, when, fare_rules)
         status = rnd.choices(["completed", "cancelled"], [10, 1])[0]
         cur = con.execute(
             """INSERT INTO rides(passenger_id, driver_id, car_id, pickup_address, dropoff_address,
@@ -984,6 +1040,47 @@ def report_hours():
     return jsonify({"since": since, "sql": HOURS_SQL, "rows": data})
 
 
+@app.get("/api/fares")
+def public_fares():
+    """All active prices, for the passenger's price panel (no login needed)."""
+    return jsonify(rows(get_db().execute(
+        "SELECT rule_key, name, kind, amount, applies_to FROM fare_rules WHERE active=1 ORDER BY rowid")))
+
+
+@app.get("/api/fare_rules")
+@require("admin")
+def list_fare_rules():
+    return jsonify(rows(get_db().execute("SELECT * FROM fare_rules ORDER BY rowid")))
+
+
+@app.post("/api/fare_rules/<rule_key>")
+@require("admin")
+def update_fare_rule(rule_key):
+    """Admin changes a price or switches an extra charge on/off. New bookings use it at once;
+    rides already booked keep the price saved in rides.price."""
+    db, b = get_db(), body()
+    rule = db.execute("SELECT * FROM fare_rules WHERE rule_key=?", (rule_key,)).fetchone()
+    if not rule:
+        return bad("No such price rule", 404)
+    try:
+        amount = float(b.get("amount", rule["amount"]))
+    except (TypeError, ValueError):
+        return bad("The amount must be a number")
+    active = 1 if b.get("active", rule["active"]) in (1, True, "1", "true") else 0
+    if rule_key in CORE_RULES and not active:
+        return bad("Base fare, price per km and minimum fare cannot be switched off")
+    if rule["kind"] == "multiplier" and not 1 <= amount <= 3:
+        return bad("A multiplier must be between 1 and 3")
+    if amount <= 0:
+        return bad("The amount must be more than 0")
+    if rule["kind"] != "multiplier" and amount > 100000:
+        return bad("The amount is too large")
+    db.execute("UPDATE fare_rules SET amount=?, active=?, updated_at=? WHERE rule_key=?",
+               (amount, active, now_str(), rule_key))
+    db.commit()
+    return jsonify(dict(db.execute("SELECT * FROM fare_rules WHERE rule_key=?", (rule_key,)).fetchone()))
+
+
 @app.post("/api/reset")
 @require("admin")
 def api_reset():
@@ -995,4 +1092,5 @@ def api_reset():
 init_db()
 
 if __name__ == "__main__":
-    app.run(debug=True, port=int(os.environ.get("PORT", 5000)))
+    # Local run: python app.py. On a server we use gunicorn instead (see README, "Deploy").
+    app.run(debug=os.environ.get("FLASK_DEBUG", "1") == "1", port=int(os.environ.get("PORT", 5000)))

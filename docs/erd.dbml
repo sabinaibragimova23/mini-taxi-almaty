@@ -60,3 +60,14 @@ Table driver_shifts {
     driver_id [unique, note: 'only where ended_at IS NULL: one open shift per driver']
   }
 }
+
+Table fare_rules {
+  rule_key text [pk, note: 'base, per_km, minimum, mountain, airport, night, rush']
+  name text [not null]
+  kind text [not null, note: 'fixed / per_km / minimum / surcharge / multiplier']
+  amount real [not null, note: 'CHECK > 0; multipliers 1 to 3']
+  applies_to text [not null]
+  active integer [not null, default: 1, note: '0 or 1']
+  updated_at text
+  Note: 'No foreign keys: a ride stores the final price in rides.price at booking, so changing a rule never changes old rides.'
+}

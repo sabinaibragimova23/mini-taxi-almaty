@@ -56,6 +56,8 @@ An existing `taxi.db` is upgraded automatically on start (see `migrations/`).
 | POST | /api/rides/:id/cancel | passenger (own), admin | cancel an active ride |
 | GET | /api/driver/rides, /api/driver/earnings | driver | own rides, own earnings |
 | POST | /api/driver/online, /api/driver/offline | driver | start / end a shift |
+| GET | /api/fares | everyone | active prices for the price panel |
+| GET / POST | /api/fare_rules, /api/fare_rules/:key | admin | all prices / change a price or switch it on/off |
 | GET | /api/driver_shifts, /api/reports/driver-hours | admin | all shifts, hours online per driver (7 days) |
 | POST | /api/rides/:id/complete | driver (own) | complete + payment `{method}` in one transaction |
 | POST | /api/rides/:id/pay | passenger / driver (own) | pay again by card / record cash |
@@ -65,8 +67,21 @@ An existing `taxi.db` is upgraded automatically on start (see `migrations/`).
 
 ## Fare
 
-500 ₸ pickup + 140 ₸/km (distance × 1.35 for roads), minimum 800 ₸.
-Medeu / Shymbulak: +600 ₸. Night (23:00–06:00): ×1.2.
+All prices are stored in the `fare_rules` table (migration 005). The admin changes them in the **Prices** tab,
+and passengers see them in the price panel under the booking form.
+
+| Price | Default | When |
+|---|---|---|
+| Base fare | 500 ₸ | every ride |
+| Price per km | 140 ₸ | distance = straight line × 1.35 |
+| Minimum fare | 800 ₸ | if the ride costs less |
+| Mountain surcharge | +600 ₸ | Medeu or Shymbulak |
+| Airport surcharge | +400 ₸ | Almaty Airport |
+| Night fare | ×1.2 | 23:00–06:00 |
+| Rush hour | ×1.1 | 07:00–10:00 and 17:00–20:00 on weekdays |
+
+The passenger sees every line of the price before booking. A booked ride keeps its price in `rides.price`,
+so a later price change does not touch it.
 
 ## Business rules
 

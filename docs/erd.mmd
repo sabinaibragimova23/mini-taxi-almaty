@@ -57,3 +57,12 @@ erDiagram
         TEXT started_at "NOT NULL"
         TEXT ended_at "empty while online"
     }
+    FARE_RULES {
+        TEXT rule_key PK
+        TEXT name "NOT NULL"
+        TEXT kind "fixed, per_km, minimum, surcharge, multiplier"
+        REAL amount "CHECK > 0"
+        TEXT applies_to "NOT NULL"
+        INTEGER active "0 or 1"
+        TEXT updated_at
+    }

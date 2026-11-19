@@ -385,3 +385,31 @@ table.matrix code { font-family: var(--mono); color: var(--navy); font-weight: 6
   margin-top: 10px;
   flex-wrap: wrap;
 }
+/* =================== Prices =================== */
+.quote-wrap { width: 100%; }
+.price-lines { list-style: none; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px dashed var(--line); font-size: 13.5px; }
+.price-lines li { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; color: var(--muted); }
+.price-lines li b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.price-lines li.extra span, .price-lines li.extra b { color: var(--orange); }
+.price-lines li.total { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 8px; color: var(--ink); font-weight: 700; }
+.price-lines li.total b { font-weight: 800; }
+.prices-btn { width: 100%; margin-top: 10px; }
+.price-dialog { width: min(920px, calc(100vw - 32px)); padding: 28px 28px 24px; position: relative; }
+.price-dialog[open] { animation: pop .18s ease; }
+@keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+.dialog-close { position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; border-radius: 50%; border: 0; background: var(--bg); color: var(--ink); font-size: 20px; line-height: 1; }
+.dialog-close:hover { background: var(--line); }
+.price-dialog .price-head { padding-right: 40px; }
+.price-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.price-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 14px; }
+.price-cols h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-family: var(--body); margin-bottom: 6px; }
+.price-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.price-table td { padding: 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.price-table td.num { text-align: right; padding: 8px 14px; white-space: nowrap; font-weight: 700; color: var(--navy); }
+.price-table td.muted { font-size: 13px; }
+.prices-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+#priceExample { max-width: 460px; }
+#priceRules td { white-space: normal; }
+.amount-input { width: 96px !important; padding: 7px 9px !important; }
+.mono-sm { font-family: var(--mono); font-size: 11.5px; }
+@media (max-width: 960px) { .price-cols, .prices-grid { grid-template-columns: 1fr; } }

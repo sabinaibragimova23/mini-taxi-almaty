@@ -45,12 +45,12 @@ const state = { me: null, places: [], pickup: "", dropoff: "", table: "passenger
 const ROLE_VIEWS = {
   passenger: [["book", "Book"], ["myrides", "My rides"]],
   driver: [["orders", "My orders"], ["earnings", "Earnings"]],
-  admin: [["dispatch", "Dispatch"], ["db", "Database"], ["reports", "Reports"], ["access", "Access & roles"]],
+  admin: [["dispatch", "Dispatch"], ["prices", "Prices"], ["db", "Database"], ["reports", "Reports"], ["access", "Access & roles"]],
 };
 const ROLE_NAME = { passenger: "Passenger", driver: "Driver", admin: "Admin" };
 const LOADERS = {
   login: loadLogin, book: loadBook, myrides: loadMyRides, orders: loadOrders, earnings: loadEarnings,
-  dispatch: loadDispatch, db: loadTable, reports: loadReports, access: renderAccess,
+  dispatch: loadDispatch, prices: loadPrices, db: loadTable, reports: loadReports, access: renderAccess,
 };
 
 function renderShell() {
@@ -242,11 +242,12 @@ async function loadBook() {
 }
 
 let hadActive = null;
+let rideTimers = {};
+
 async function renderActiveBanner() {
   const rides = await api("/api/my/rides");
   const active = rides.find(r => r.status === "requested");
   setCount(active ? 1 : 0);
-  // ride just finished while we were watching
   if (hadActive && !active) {
     const done = rides.find(r => r.ride_id === hadActive);
     if (done) toast(done.status === "completed" ? `Ride #${done.ride_id} completed, payment ${LABEL_TXT[done.last_payment_status] || ""}` : `Ride #${done.ride_id} ${LABEL_TXT[done.status]}`, done.last_payment_status === "failed");
@@ -258,14 +259,58 @@ async function renderActiveBanner() {
 }
 
 function rideBanner(r) {
-  const eta = 3 + (r.ride_id % 6);
-  return `<div class="card confirm">
-      <div><div class="ride-id">ride #${r.ride_id} · ${esc(r.start_time)} · <span class="live"><i></i>driver on the way</span></div>
-        <h3>${esc(r.driver_name)} <span class="stars">★ ${Number(r.driver_rating).toFixed(1)}</span> <span class="muted" style="font-size:13px;font-weight:500">${esc(r.driver_phone || "")}</span></h3>
-        <div style="margin-top:6px">${esc(r.car_model)}, ${esc(r.car_color || "")} &nbsp;${plate(r.plate_number)}</div>
-        <div class="muted" style="margin-top:6px">${esc(r.pickup_address)} → ${esc(r.dropoff_address)} · <b>${money(r.price)}</b></div></div>
-      <div class="eta">arrives in ~${eta} min<br><button class="btn danger small" data-act="cancel" data-id="${r.ride_id}">Cancel ride</button></div></div>`;
+  const initialEtaMin = 3 + (r.ride_id % 3); 
+  const totalSeconds = initialEtaMin * 60;
+  
+  const storageKey = `ride_start_${r.ride_id}`;
+  let startTime = localStorage.getItem(storageKey);
+  if (!startTime) {
+    startTime = Date.now();
+    localStorage.setItem(storageKey, startTime);
+  } else {
+    startTime = Number(startTime);
+  }
+  
+  const secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
+  const progress = Math.min(100, Math.floor((secondsElapsed / totalSeconds) * 100));
+  
+  const remainingSec = Math.max(0, totalSeconds - secondsElapsed);
+  const currentEta = Math.ceil(remainingSec / 60);
+  
+  const isArrived = progress >= 100 || currentEta === 0;
+  const isCancelLocked = progress >= 80;
+
+  const topStatusText = isArrived 
+    ? 'driver is waiting for you' 
+    : `driver on the way (${progress}% of route)`;
+
+  const lockMessage = isArrived
+    ? 'Driver has arrived'
+    : 'Driver is arriving, please wait';
+
+  return `<div class="card confirm" style="display: flex; justify-content: space-between; align-items: center;">
+    <div style="flex: 1;">
+      <div>
+        <div class="ride-id">ride #${r.ride_id}</div> 
+        ${esc(r.start_time)} 
+        <span class="live"><i></i>${topStatusText}</span>
+      </div>
+      <h3 style="margin: 6px 0;">${esc(r.driver_name)} <span class="stars">★ ${Number(r.driver_rating).toFixed(1)}</span> <span class="muted" style="font-size:12px">(${esc(r.car_model)}, ${esc(r.car_color || "")})  ${plate(r.plate_number)}</span></h3>
+      <div class="muted"><b>${esc(r.pickup_address)}</b> → ${esc(r.dropoff_address)}</div>
+    </div>
+    <div style="text-align: right; min-width: 220px;">
+      <div class="eta" style="margin-bottom: 6px;">${isArrived ? 'Arrived' : `arrives in ~${currentEta} min`}</div>
+      <div>
+        ${isCancelLocked 
+          ? `<span style="color:#d9534f; font-weight:600; font-size:11px;"> ${lockMessage}</span>`
+          : `<button class="btn danger small" data-act="cancel" data-id="${r.ride_id}">Cancel ride</button>`
+        }
+      </div>
+    </div>
+  </div>`;
 }
+
+
 
 async function syncRoute() {
   $("#pickupSelect").value = state.pickup;
@@ -281,10 +326,15 @@ async function syncRoute() {
   }
   try {
     const q = await api("/api/quote", { method: "POST", body: { pickup: state.pickup, dropoff: state.dropoff } });
-    box.innerHTML = `<div class="quote-body">
-      <div><div class="quote-meta">${q.distance_km} km · ~${q.minutes} min ride</div>
-        ${q.night ? '<span class="tag night">night fare ×1.2</span>' : ""}${q.mountain ? '<span class="tag mountain">mountains +600 ₸</span>' : ""}</div>
-      <div class="quote-price">${money(q.price)}</div></div>`;
+    box.innerHTML = `<div class="quote-wrap">
+      <div class="quote-body">
+        <div class="quote-meta">${q.distance_km} km · ~${q.minutes} min ride</div>
+        <div class="quote-price">${money(q.price)}</div>
+      </div>
+      <ul class="price-lines">${q.lines.map(l => `<li class="${l.rule && !["base", "per_km"].includes(l.rule) ? "extra" : ""}">
+        <span>${esc(l.label)}</span><b>${l.kzt >= 0 && l.rule && !["base", "per_km"].includes(l.rule) ? "+" : ""}${money(l.kzt)}</b></li>`).join("")}
+        <li class="total"><span>Total</span><b>${money(q.price)}</b></li></ul>
+    </div>`;
     state.quoteOk = true;
   } catch (err) {
     box.innerHTML = `<div class="quote-empty">${esc(err.message)}</div>`;
@@ -435,6 +485,71 @@ async function loadEarnings() {
 }
 
 /* =========================== ADMIN: DISPATCH =========================== */
+/* =========================== PRICES =========================== */
+function fareValue(r) {
+  if (r.kind === "multiplier") return `×${Number(r.amount)}`;
+  if (r.kind === "per_km") return `${money(r.amount)} / km`;
+  if (r.kind === "surcharge") return `+${money(r.amount)}`;
+  return money(r.amount);
+}
+
+/* passenger: panel with all prices and extra charges */
+async function renderPricePanel() {
+  const fares = await api("/api/fares");
+  const main = fares.filter(r => ["fixed", "per_km", "minimum"].includes(r.kind));
+  const extra = fares.filter(r => !["fixed", "per_km", "minimum"].includes(r.kind));
+  const row = r => `<tr><td><b>${esc(r.name)}</b></td><td class="num">${fareValue(r)}</td><td class="muted">${esc(r.applies_to)}</td></tr>`;
+  $("#pricePanel").innerHTML = `
+    <div class="price-head"><h2 id="priceDialogTitle">Prices and extra charges</h2><span class="muted">All prices in tenge. The price is fixed when you book.</span></div>
+    <div class="price-cols">
+      <div><h3>Main fare</h3><table class="price-table">${main.map(row).join("")}</table></div>
+      <div><h3>Extra charges</h3><table class="price-table">${extra.map(row).join("") || '<tr><td class="muted">No extra charges right now</td></tr>'}</table></div>
+    </div>
+    <p class="muted" style="font-size:13px;margin:12px 0 0">Extra charges add up: a night ride from the airport pays the airport surcharge and the night fare.</p>`;
+}
+
+$("#pricesBtn").addEventListener("click", async () => {
+  try { await renderPricePanel(); $("#priceDialog").showModal(); } catch (err) { toast(err.message, true); }
+});
+$("#priceDialogClose").addEventListener("click", () => $("#priceDialog").close());
+// a click on the dark background outside the window closes it too
+$("#priceDialog").addEventListener("click", e => { if (e.target.id === "priceDialog") e.target.close(); });
+
+/* admin: change prices, switch extra charges on and off */
+async function loadPrices() {
+  const rules = await api("/api/fare_rules");
+  const core = ["base", "per_km", "minimum"];
+  $("#priceRules").innerHTML = `<thead><tr><th>Price</th><th>When it applies</th><th>Type</th><th>Amount</th><th>On</th><th>Last change</th><th></th></tr></thead><tbody>${
+    rules.map(r => `<tr data-rule="${esc(r.rule_key)}">
+      <td><b>${esc(r.name)}</b><div class="muted mono-sm">${esc(r.rule_key)}</div></td>
+      <td class="wrap">${esc(r.applies_to)}</td>
+      <td><span class="badge ${r.kind === "multiplier" ? "card" : "cash"}">${r.kind}</span></td>
+      <td><input type="number" class="amount-input" value="${Number(r.amount)}" min="${r.kind === "multiplier" ? 1 : 1}" max="${r.kind === "multiplier" ? 3 : 100000}" step="${r.kind === "multiplier" ? 0.05 : 10}"> <span class="muted">${r.kind === "multiplier" ? "×" : r.kind === "per_km" ? "₸/km" : "₸"}</span></td>
+      <td><input type="checkbox" class="active-input" ${r.active ? "checked" : ""} ${core.includes(r.rule_key) ? 'disabled title="Always on"' : ""}></td>
+      <td class="muted">${esc(r.updated_at || "—")}</td>
+      <td><button class="btn blue small" data-save-rule="${esc(r.rule_key)}">Save</button></td></tr>`).join("")}</tbody>`;
+  await renderPriceExample();
+}
+async function renderPriceExample() {
+  const q = await api("/api/quote", { method: "POST", body: { pickup: "Almaty Airport", dropoff: "Esentai Mall" } });
+  $("#priceExample").innerHTML = `<h3>Example right now: Almaty Airport → Esentai Mall</h3>
+    <ul class="price-lines">${q.lines.map(l => `<li><span>${esc(l.label)}</span><b>${money(l.kzt)}</b></li>`).join("")}
+    <li class="total"><span>Total</span><b>${money(q.price)}</b></li></ul>`;
+}
+$("#priceRules").addEventListener("click", async e => {
+  const b = e.target.closest("[data-save-rule]");
+  if (!b) return;
+  const tr = b.closest("tr");
+  b.disabled = true;
+  try {
+    const r = await api(`/api/fare_rules/${b.dataset.saveRule}`, { method: "POST", body: {
+      amount: Number(tr.querySelector(".amount-input").value),
+      active: tr.querySelector(".active-input").checked } });
+    toast(`${r.name} saved. New bookings use it now.`);
+    loadPrices();
+  } catch (err) { toast(err.message, true); b.disabled = false; }
+});
+
 async function loadDispatch() {
   const [s, active, hist] = await Promise.all([
     api("/api/stats"),
@@ -638,6 +753,7 @@ const TABLES = {
   drivers: { desc: "People who drive the cars", cols: ["driver_id", "full_name", "phone", "email", "license_number", "rating", "password_hash"], pk: "driver_id", fk: {}, why: "Driver details and rating are stored once." },
   cars: { desc: "Cars used for rides", cols: ["car_id", "driver_id", "plate_number", "model", "color"], pk: "car_id", fk: { driver_id: "DRIVERS" }, why: "A driver can change cars or have two, so car data is kept separately from the driver (see driver 3)." },
   rides: { desc: "One row for every ride", cols: ["ride_id", "passenger_id", "driver_id", "car_id", "pickup_address", "dropoff_address", "start_time", "status", "price", "ride_rating", "ride_comment"], pk: "ride_id", fk: { passenger_id: "PASSENGERS", driver_id: "DRIVERS", car_id: "CARS" }, why: "This is the main action. It connects a passenger, a driver and a car." },
+  fare_rules: { desc: "All prices and extra charges", cols: ["rule_key", "name", "kind", "amount", "applies_to", "active", "updated_at"], pk: "rule_key", fk: {}, why: "Prices are data, not code: the admin changes them in the Prices panel. A ride keeps the price saved at booking." },
   driver_shifts: { desc: "When each driver was online", cols: ["shift_id", "driver_id", "started_at", "ended_at"], pk: "shift_id", fk: { driver_id: "DRIVERS" }, why: "A driver is online while their shift has no ended_at. Only online drivers get orders." },
   payments: { desc: "Payment for each ride", cols: ["payment_id", "ride_id", "amount", "method", "payment_status", "paid_at"], pk: "payment_id", fk: { ride_id: "RIDES" }, why: "Payment can fail or happen later, so it has its own record." },
 };
@@ -751,13 +867,14 @@ const MATRIX = [
   ["DRIVERS", "Name, phone, rating of own assigned driver", "Own profile", "Read all, add"],
   ["CARS", "Model, color, plate of own assigned car", "Own cars", "Read all, add"],
   ["RIDES", "Own rides: create, cancel while active", "Own assigned rides: complete", "Read all, cancel"],
+  ["FARE_RULES", "Read active prices", "Read active prices", "Read all, change prices, switch extras on/off"],
   ["DRIVER_SHIFTS", "No access", "Own shifts: go online / offline", "Read all, hours report"],
   ["PAYMENTS", "Own rides: pay again by card", "Own rides: create payment (cash/card)", "Read all, reports"],
 ];
 const AREAS = [
   { t: "Systems Analysis & Requirements", r: "Users, problems, requirements, business rules", li: ["Main action: a passenger books a ride", "Roles: passenger, driver, admin", "A driver has only one active ride at a time", "A passenger has only one active ride at a time"] },
   { t: "Data & Database", r: "ERD, entities, relationships, SQL", li: ["5 tables: PASSENGERS, DRIVERS, CARS, RIDES, PAYMENTS", "PK, FK and CHECK constraints in schema.sql", "The Database tab shows the live tables"] },
-  { t: "Application & Development", r: "Core functionality, business logic, UI", li: ["Flask API (app.py) + three role interfaces", "Fare: 500 ₸ + 140 ₸/km, min 800 ₸", "Mountains (Medeu, Shymbulak) +600 ₸, night ×1.2", "The free driver with the best rating is assigned"] },
+  { t: "Application & Development", r: "Core functionality, business logic, UI", li: ["Flask API (app.py) + three role interfaces", "Prices come from the FARE_RULES table", "The admin changes them in the Prices panel", "The free driver with the best rating is assigned"] },
   { t: "Architecture & Security", r: "Architecture, roles, access control, security", li: ["Browser → REST API → SQLite", "Signed login token, role checked on every request", "Users touch only their own rides (403 otherwise)", "Completing a ride + payment is one transaction"] },
   { t: "Testing, Analytics & Integration", r: "Testing, reports/KPIs, system quality", li: ["Report: driver earnings per month → bonuses", "Finding unpaid rides", "queries.sql: queries for the presentation", "Tests: all drivers busy → 409, wrong role → 403"] },
 ];
