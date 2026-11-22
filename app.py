@@ -13,6 +13,7 @@ Roles: passenger and driver log in by email (or phone) + password, admin by pass
 (ADMIN_PASSWORD env variable, default: admin123).
 """
 import math
+import json
 import os
 import random
 import re
@@ -27,6 +28,24 @@ DB_PATH = os.path.join(BASE_DIR, "taxi.db")
 SCHEMA_PATH = os.path.join(BASE_DIR, "schema.sql")
 
 DEMO_PASSWORD = "demo123"  # password of all demo passengers and drivers
+
+# Feedback options shown to passengers after a completed ride.
+POSITIVE_FEEDBACK_OPTIONS = {
+    "Polite driver",
+    "Clean car",
+    "Safe driving",
+    "Arrived on time",
+    "Comfortable ride",
+    "Friendly communication",
+}
+IMPROVEMENT_FEEDBACK_OPTIONS = {
+    "Rude driver",
+    "Dirty car",
+    "Unsafe driving",
+    "Driver was late",
+    "Uncomfortable ride",
+}
+ALL_FEEDBACK_OPTIONS = POSITIVE_FEEDBACK_OPTIONS | IMPROVEMENT_FEEDBACK_OPTIONS
 MIN_PASSWORD_LEN = 6
 DEMO_DRIVER_EMAILS = {  # used only to upgrade an old taxi.db
     "+7 701 555 20 11": "bauyrzhan.t@taxi.kz", "+7 707 412 87 30": "nursultan.i@taxi.kz",
@@ -142,8 +161,7 @@ def init_db(force=False):
 
 
 def migrate_auth(con):
-    """Upgrade an existing taxi.db: password_hash / ride_rating columns (migration 001),
-    drivers.email (migration 002), and give users without a password the demo password."""
+    """Upgrade an existing taxi.db with auth, ride rating, comment and feedback columns."""
     def cols(table):
         return [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
     for table in ("passengers", "drivers"):
@@ -155,6 +173,8 @@ def migrate_auth(con):
         con.execute("ALTER TABLE rides ADD COLUMN ride_rating INTEGER CHECK (ride_rating BETWEEN 1 AND 5)")
     if "ride_comment" not in cols("rides"):
         con.execute("""ALTER TABLE rides ADD COLUMN ride_comment TEXT CHECK (ride_comment IS NULL OR length(ride_comment) <= 1000) """)
+    if "feedback_tags" not in cols("rides"):
+        con.execute("ALTER TABLE rides ADD COLUMN feedback_tags TEXT")
     if "email" not in cols("drivers"):
         con.execute("ALTER TABLE drivers ADD COLUMN email TEXT")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_email ON drivers(email)")
@@ -569,9 +589,20 @@ def rate_ride(ride_id):
     if len(comment) > 1000:
         return bad("Comment must not exceed 1000 characters")
 
-    # Comments are required for ratings from 1 to 3
-    if rating <= 3 and not comment:
-        return bad("Please explain what you did not like about the ride")
+    # Validate ready-made feedback options
+    feedback_tags = b.get("feedback_tags", [])
+    if not isinstance(feedback_tags, list) or any(not isinstance(tag, str) for tag in feedback_tags):
+        return bad("Feedback options must be a list of text values")
+
+    # Remove duplicate selections while preserving order.
+    feedback_tags = list(dict.fromkeys(tag.strip() for tag in feedback_tags))
+    allowed_tags = IMPROVEMENT_FEEDBACK_OPTIONS if rating <= 3 else POSITIVE_FEEDBACK_OPTIONS
+    if any(tag not in allowed_tags for tag in feedback_tags):
+        return bad("One or more feedback options are not valid for this rating")
+
+    # For ratings 1-3, require either at least one ready-made option or a text comment.
+    if rating <= 3 and not feedback_tags and not comment:
+        return bad("Please select a feedback option or write a comment")
 
     # Check ride ownership and status
     ride, err = load_owned_ride(ride_id)
@@ -592,9 +623,9 @@ def rate_ride(ride_id):
 
         cur = db.execute("""
             UPDATE rides
-            SET ride_rating = ?, ride_comment = ?
+            SET ride_rating = ?, ride_comment = ?, feedback_tags = ?
             WHERE ride_id = ? AND ride_rating IS NULL
-        """, (rating, comment or None, ride_id))
+        """, (rating, comment or None, json.dumps(feedback_tags), ride_id))
 
         if cur.rowcount != 1:
             db.rollback()
@@ -618,6 +649,7 @@ def rate_ride(ride_id):
         "ride_id": ride_id,
         "ride_rating": rating,
         "ride_comment": comment or None,
+        "feedback_tags": feedback_tags,
         "driver_rating": new
     })
 

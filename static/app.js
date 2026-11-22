@@ -336,6 +336,24 @@ function rateButtons(id) {
 function starsView(n) {
   return n ? `<span class="stars" title="${n} of 5">${"★".repeat(n)}<span class="off">${"★".repeat(5 - n)}</span></span>` : "—";
 }
+const POSITIVE_FEEDBACK_OPTIONS = [
+  "Polite driver", "Clean car", "Safe driving",
+  "Arrived on time", "Comfortable ride", "Friendly communication"
+];
+const IMPROVEMENT_FEEDBACK_OPTIONS = [
+  "Rude driver", "Dirty car", "Unsafe driving",
+  "Driver was late", "Uncomfortable ride"
+];
+
+function feedbackTagsView(raw) {
+  if (!raw) return "—";
+  let tags = raw;
+  if (typeof raw === "string") {
+    try { tags = JSON.parse(raw); } catch { return "—"; }
+  }
+  if (!Array.isArray(tags) || !tags.length) return "—";
+  return tags.map(tag => `<span class="feedback-tag">${esc(tag)}</span>`).join(" ");
+}
 async function loadMyRides() {
   const [rides] = await Promise.all([api("/api/my/rides"), refreshMe()]);
 
@@ -374,7 +392,10 @@ async function loadMyRides() {
       <td>${badge(r.status)}</td>
       <td>${r.last_payment_status ? badge(r.last_payment_status) + ` <span class="muted">${LABEL_TXT[r.last_payment_method]}</span>` : "—"}</td>
       <td>${r.status !== "completed" ? "—" : r.ride_rating ? starsView(r.ride_rating) : rateButtons(r.ride_id)}</td>
-      <td class="wrap">${r.ride_comment ? esc(r.ride_comment) : "—"}</td>
+      <td class="wrap">
+        ${feedbackTagsView(r.feedback_tags)}
+        ${r.ride_comment ? `<div class="feedback-comment">${esc(r.ride_comment)}</div>` : ""}
+      </td>
     </tr>`).join("")
     || '<tr><td colspan="10" class="muted">No trips yet</td></tr>'}</tbody>`;
 }
@@ -458,7 +479,10 @@ async function loadDispatch() {
       <td class="wrap">${esc(r.pickup_address)} → ${esc(r.dropoff_address)}</td><td><b>${money(r.price)}</b></td><td>${badge(r.status)}</td>
       <td>${r.last_payment_status ? badge(r.last_payment_status) + ` <span class="muted">${LABEL_TXT[r.last_payment_method]}</span>` : "—"}</td>
       <td>${starsView(r.ride_rating)}</td>
-      <td class="wrap">${r.ride_comment ? esc(r.ride_comment) : "—"}</td>
+      <td class="wrap">
+        ${feedbackTagsView(r.feedback_tags)}
+        ${r.ride_comment ? `<div class="feedback-comment">${esc(r.ride_comment)}</div>` : ""}
+      </td>
       </tr>`).join("")}</tbody>`;
 }
 $("#rideFilter").addEventListener("click", e => {
@@ -477,6 +501,12 @@ function setCount(n) {
 
 /* ride actions for all roles (the server checks who is allowed) */
 document.addEventListener("click", async e => {
+  if (e.target.classList?.contains("rating-feedback-backdrop")) {
+    document.querySelector(".rating-feedback-backdrop")?.remove();
+    LOADERS[state.view]?.();
+    return;
+  }
+
   const b = e.target.closest("[data-act]");
   if (!b) return;
 
@@ -489,56 +519,52 @@ document.addEventListener("click", async e => {
     const required = rating <= 3;
     const cell = b.closest("td");
 
-    cell.innerHTML = `
-      <div class="rating-comment-form">
-        <label class="rating-comment-label">
-          ${required
-            ? "What didn't you like about the ride?"
-            : "Would you like to leave a comment?"}
-        </label>
-
-        <textarea
-          class="rating-comment-input"
-          maxlength="1000"
-          rows="3"
-          placeholder="${required
-            ? "Please explain your experience..."
-            : "Share your experience..."}"
-        ></textarea>
-
-        <div class="rating-comment-actions">
-          <button
-            type="button"
-            class="btn primary small"
-            data-act="submit-rating"
-            data-id="${id}"
-            data-v="${rating}"
-          >
-            Submit
-          </button>
-
-          <button
-            type="button"
-            class="btn ghost small"
-            data-act="cancel-rating"
-            data-id="${id}"
-          >
-            Cancel
-          </button>
-        </div>
+    const options = required ? IMPROVEMENT_FEEDBACK_OPTIONS : POSITIVE_FEEDBACK_OPTIONS;
+    document.body.insertAdjacentHTML("beforeend", `
+      <div class="rating-feedback-backdrop" role="presentation">
+        <section class="rating-feedback-modal" role="dialog" aria-modal="true" aria-labelledby="rating-feedback-title">
+          <button type="button" class="rating-feedback-close" data-act="cancel-rating" data-id="${id}" aria-label="Close">×</button>
+          
+          <h3 id="rating-feedback-title">${required ? "How can we improve?" : "How was your ride?"}</h3>
+          <p class="rating-feedback-subtitle">${required ? "Choose what went wrong, or tell us more below." : "Select what you enjoyed. You can also leave a comment."}</p>
+          <div class="rating-feedback-stars">${"★".repeat(rating)}<span>${"★".repeat(5-rating)}</span></div>
+          <div class="rating-comment-form">
+            <label class="rating-comment-label">${required ? "What could be improved?" : "What did you like?"}</label>
+            <div class="feedback-options">
+              ${options.map(option => `
+                <label class="feedback-option">
+                  <input type="checkbox" name="feedback_tag" value="${esc(option)}">
+                  <span>${esc(option)}</span>
+                </label>
+              `).join("")}
+            </div>
+            <label class="rating-comment-label" for="ride-feedback-comment">Additional comment <span class="optional-label">(optional)</span></label>
+            <textarea
+              id="ride-feedback-comment"
+              class="rating-comment-input"
+              maxlength="1000"
+              rows="3"
+              placeholder="${required ? "Select an option or explain your experience..." : "Share your experience..."}"
+            ></textarea>
+            <div class="rating-comment-actions">
+              <button type="button" class="btn primary" data-act="submit-rating" data-id="${id}" data-v="${rating}">Submit feedback</button>
+              <button type="button" class="btn ghost" data-act="cancel-rating" data-id="${id}">Cancel</button>
+            </div>
+          </div>
+        </section>
       </div>
-    `;
+    `);
 
-    cell.querySelector("textarea").focus();
+    document.querySelector(".rating-feedback-modal textarea")?.focus();
     return;
   }
 
   // Cancel comment form
   if (action === "cancel-rating") {
-  document.querySelector(".rating-comment-form")?.remove();
-  LOADERS[state.view]?.();
-  return;
-}
+    document.querySelector(".rating-feedback-backdrop")?.remove();
+    LOADERS[state.view]?.();
+    return;
+  }
 
   b.disabled = true;
 
@@ -582,12 +608,14 @@ document.addEventListener("click", async e => {
 
     } else if (action === "submit-rating") {
       // Get comment from textarea
-      const cell = b.closest("td");
-      const textarea = cell.querySelector("textarea");
+      const form = b.closest(".rating-comment-form");
+      const textarea = form.querySelector("textarea");
       const comment = textarea.value.trim();
+      const feedbackTags = [...form.querySelectorAll('input[name="feedback_tag"]:checked')]
+        .map(input => input.value);
 
-      if (!comment && Number(b.dataset.v) <= 3) {
-        toast("Please enter a comment", true);
+      if (!comment && feedbackTags.length === 0 && Number(b.dataset.v) <= 3) {
+        toast("Please select at least one option or write a comment", true);
         textarea.focus();
         b.disabled = false;
         return;
@@ -597,7 +625,8 @@ document.addEventListener("click", async e => {
         method: "POST",
         body: {
           rating: Number(b.dataset.v),
-          comment: comment
+          comment: comment,
+          feedback_tags: feedbackTags
         }
       });
 
@@ -611,7 +640,7 @@ document.addEventListener("click", async e => {
       toast(`Ride #${id} paid by ${r.method}`);
     }
 
-    document.querySelector(".rating-comment-form")?.remove();
+    document.querySelector(".rating-feedback-backdrop")?.remove();
 
     LOADERS[state.view]?.();
 
@@ -626,7 +655,7 @@ const TABLES = {
   passengers: { desc: "People who order rides", cols: ["passenger_id", "full_name", "phone", "email", "registration_date", "password_hash"], pk: "passenger_id", fk: {}, why: "Passenger details are stored once, not in every ride." },
   drivers: { desc: "People who drive the cars", cols: ["driver_id", "full_name", "phone", "email", "license_number", "rating", "password_hash"], pk: "driver_id", fk: {}, why: "Driver details and rating are stored once." },
   cars: { desc: "Cars used for rides", cols: ["car_id", "driver_id", "plate_number", "model", "color"], pk: "car_id", fk: { driver_id: "DRIVERS" }, why: "A driver can change cars or have two, so car data is kept separately from the driver (see driver 3)." },
-  rides: { desc: "One row for every ride", cols: ["ride_id", "passenger_id", "driver_id", "car_id", "pickup_address", "dropoff_address", "start_time", "status", "price", "ride_rating", "ride_comment"], pk: "ride_id", fk: { passenger_id: "PASSENGERS", driver_id: "DRIVERS", car_id: "CARS" }, why: "This is the main action. It connects a passenger, a driver and a car." },
+  rides: { desc: "One row for every ride", cols: ["ride_id", "passenger_id", "driver_id", "car_id", "pickup_address", "dropoff_address", "start_time", "status", "price", "ride_rating", "ride_comment", "feedback_tags"], pk: "ride_id", fk: { passenger_id: "PASSENGERS", driver_id: "DRIVERS", car_id: "CARS" }, why: "This is the main action. It connects a passenger, a driver and a car." },
   payments: { desc: "Payment for each ride", cols: ["payment_id", "ride_id", "amount", "method", "payment_status", "paid_at"], pk: "payment_id", fk: { ride_id: "RIDES" }, why: "Payment can fail or happen later, so it has its own record." },
 };
 
