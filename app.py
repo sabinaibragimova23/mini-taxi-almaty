@@ -13,6 +13,7 @@ Roles: passenger and driver log in by email (or phone) + password, admin by pass
 (ADMIN_PASSWORD env variable, default: admin123).
 """
 import math
+import json
 import os
 import random
 import re
@@ -27,6 +28,17 @@ DB_PATH = os.path.join(BASE_DIR, "taxi.db")
 SCHEMA_PATH = os.path.join(BASE_DIR, "schema.sql")
 
 DEMO_PASSWORD = "demo123"  # password of all demo passengers and drivers
+
+
+POSITIVE_FEEDBACK_OPTIONS = {
+    "Polite driver", "Clean car", "Safe driving",
+    "Arrived on time", "Comfortable ride", "Friendly communication",
+}
+IMPROVEMENT_FEEDBACK_OPTIONS = {
+    "Rude driver", "Dirty car", "Unsafe driving",
+    "Driver was late", "Uncomfortable ride",
+}
+ALL_FEEDBACK_OPTIONS = POSITIVE_FEEDBACK_OPTIONS | IMPROVEMENT_FEEDBACK_OPTIONS
 MIN_PASSWORD_LEN = 6
 DEMO_DRIVER_EMAILS = {  # used only to upgrade an old taxi.db
     "+7 701 555 20 11": "bauyrzhan.t@taxi.kz", "+7 707 412 87 30": "nursultan.i@taxi.kz",
@@ -209,6 +221,8 @@ def migrate_auth(con):
         con.execute("ALTER TABLE rides ADD COLUMN ride_rating INTEGER CHECK (ride_rating BETWEEN 1 AND 5)")
     if "ride_comment" not in cols("rides"):
         con.execute("""ALTER TABLE rides ADD COLUMN ride_comment TEXT CHECK (ride_comment IS NULL OR length(ride_comment) <= 1000) """)
+    if "feedback_tags" not in cols("rides"):
+        con.execute("ALTER TABLE rides ADD COLUMN feedback_tags TEXT")
     if "email" not in cols("drivers"):
         con.execute("ALTER TABLE drivers ADD COLUMN email TEXT")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_email ON drivers(email)")
@@ -651,9 +665,20 @@ def rate_ride(ride_id):
     if len(comment) > 1000:
         return bad("Comment must not exceed 1000 characters")
 
-    # Comments are required for ratings from 1 to 3
-    if rating <= 3 and not comment:
-        return bad("Please explain what you did not like about the ride")
+    # Validate selected ready-made feedback options.
+    raw_tags = b.get("feedback_tags", [])
+    if raw_tags is None:
+        raw_tags = []
+    if not isinstance(raw_tags, list) or any(not isinstance(tag, str) for tag in raw_tags):
+        return bad("Feedback options must be a list of text values")
+    tags = list(dict.fromkeys(tag.strip() for tag in raw_tags if tag.strip()))
+    allowed_tags = IMPROVEMENT_FEEDBACK_OPTIONS if rating <= 3 else POSITIVE_FEEDBACK_OPTIONS
+    if any(tag not in allowed_tags for tag in tags):
+        return bad("One or more feedback options are not valid for this rating")
+
+    # For low ratings, at least one option or a written comment is required.
+    if rating <= 3 and not tags and not comment:
+        return bad("Select at least one feedback option or leave a comment")
 
     # Check ride ownership and status
     ride, err = load_owned_ride(ride_id)
@@ -674,9 +699,9 @@ def rate_ride(ride_id):
 
         cur = db.execute("""
             UPDATE rides
-            SET ride_rating = ?, ride_comment = ?
+            SET ride_rating = ?, ride_comment = ?, feedback_tags = ?
             WHERE ride_id = ? AND ride_rating IS NULL
-        """, (rating, comment or None, ride_id))
+        """, (rating, comment or None, json.dumps(tags, ensure_ascii=False) if tags else None, ride_id))
 
         if cur.rowcount != 1:
             db.rollback()
@@ -700,6 +725,7 @@ def rate_ride(ride_id):
         "ride_id": ride_id,
         "ride_rating": rating,
         "ride_comment": comment or None,
+        "feedback_tags": tags,
         "driver_rating": new
     })
 
