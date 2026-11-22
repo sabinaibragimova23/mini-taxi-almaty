@@ -240,6 +240,31 @@
 <dialog id="modal"><form method="dialog" id="modalForm"></form></dialog>
 <div class="toast" id="toast" role="status"></div>
 
+<dialog id="penaltyDialog" style="padding: 24px; border-radius: 12px; border: none; max-width: 450px; box-shadow: 0 10px 25px rgba(0,0,0,0.3);">
+    <h3 style="margin-top: 0; color: #d9534f;">Late Cancellation Warning</h3>
+    <p style="font-size: 14px; line-height: 1.5; color: #333;">
+        The driver has completed 80%+ of the route. Late cancellation charges <strong>20%</strong> for rides over 1000 ₸ or a fixed <strong>200 ₸</strong> minimum for rides up to 1000 ₸ (compensating the driver; company bears operational/commission risk).
+    </p>
+    <div style="text-align: right; margin-top: 20px;">
+        <button id="agreePenaltyBtn" class="btn primary" style="background-color: #d9534f; color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer;">
+            I agree
+        </button>
+    </div>
+</dialog>
+
+<dialog id="payPenaltyDialog" style="padding: 24px; border-radius: 12px; border: none; max-width: 450px; box-shadow: 0 10px 25px rgba(0,0,0,0.3);">
+    <h3 style="margin-top: 0; color: #d9534f;"> Outstanding Cancellation Fee</h3>
+    <p style="font-size: 14px; line-height: 1.5; color: #333;">
+        You have an unpaid late cancellation fee from a previous ride. To ensure fairness to drivers (who completed 80%+ of the route), new bookings are locked until the fee is settled.
+    </p>
+    <div style="text-align: right; margin-top: 20px; display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" id="closePenaltyModal" class="btn ghost" style="padding: 10px 16px;">Cancel</button>
+        <button type="button" id="payPenaltyBtn" class="btn primary" style="background-color: #2e7d32; color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer;">
+            Pay the fee
+        </button>
+    </div>
+</dialog>
+
 <script src="/static/app.js"></script>
 </body>
 </html>
