@@ -241,6 +241,34 @@ async function loadBook() {
   await renderActiveBanner();
 }
 
+const penaltyDialog = $("#penaltyDialog");
+const agreePenaltyBtn = $("#agreePenaltyBtn");
+
+// Функция для показа предупреждения с проверкой localStorage
+function showPenaltyModalIfNeeded(progressPercent, rideId) {
+    // Проверяем, нажимал ли пользователь "I agree" для этой конкретной поездки
+    const agreedKey = `penalty_agreed_${rideId}`;
+    const alreadyAgreed = localStorage.getItem(agreedKey) === "true";
+
+    if (progressPercent >= 80 && penaltyDialog && !penaltyDialog.open && !alreadyAgreed) {
+        penaltyDialog.showModal();
+    }
+}
+
+// Обработчик нажатия на кнопку "I agree"
+if (agreePenaltyBtn) {
+    agreePenaltyBtn.addEventListener("click", () => {
+        if (penaltyDialog) {
+            // Нам нужно знать ID текущей поездки, чтобы сохранить статус
+            // Получаем его из активного баннера или глобального состояния
+            const activeRideId = penaltyDialog.dataset.currentRideId;
+            if (activeRideId) {
+                localStorage.setItem(`penalty_agreed_${activeRideId}`, "true");
+            }
+            penaltyDialog.close();
+        }
+    });
+}
 let hadActive = null;
 let rideTimers = {};
 
@@ -258,10 +286,21 @@ async function renderActiveBanner() {
   updateOrderBtn();
 }
 
+function calcLateCancelFee(price) {
+  const numPrice = Number(price);
+  if (!Number.isFinite(numPrice) || numPrice <= 0) {
+    return 200;
+  }
+  if (numPrice > 1000) {
+    return Math.round(numPrice * 0.2);
+  }
+  return 200;
+}
+
 function rideBanner(r) {
-  const initialEtaMin = 3 + (r.ride_id % 3); 
+  const initialEtaMin = 3 + (r.ride_id % 3);
   const totalSeconds = initialEtaMin * 60;
-  
+
   const storageKey = `ride_start_${r.ride_id}`;
   let startTime = localStorage.getItem(storageKey);
   if (!startTime) {
@@ -270,44 +309,60 @@ function rideBanner(r) {
   } else {
     startTime = Number(startTime);
   }
-  
+
   const secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
   const progress = Math.min(100, Math.floor((secondsElapsed / totalSeconds) * 100));
-  
+  if (penaltyDialog) {
+    penaltyDialog.dataset.currentRideId = r.ride_id; // Сохраняем ID текущей поездки в элемент
+}
+showPenaltyModalIfNeeded(progress, r.ride_id);
+
   const remainingSec = Math.max(0, totalSeconds - secondsElapsed);
   const currentEta = Math.ceil(remainingSec / 60);
-  
-  const isArrived = progress >= 100 || currentEta === 0;
-  const isCancelLocked = progress >= 80;
 
-  const topStatusText = isArrived 
-    ? 'driver is waiting for you' 
+  const isArrived = progress >= 100 || currentEta === 0;
+  const isLateCancel = progress >= 80 && !isArrived;
+
+  const penaltyAmount = calcLateCancelFee(r.price);
+  const driverComp = Math.round(penaltyAmount * 0.75);
+  const companyRisk = Math.max(0, penaltyAmount - driverComp);
+
+  const topStatusText = isArrived
+    ? "driver is waiting for you"
     : `driver on the way (${progress}% of route)`;
 
-  const lockMessage = isArrived
-    ? 'Driver has arrived'
-    : 'Driver is arriving, please wait';
+  let actionHtml = "";
+  if (isArrived) {
+    actionHtml = `<span style="color:#2e7d32; font-weight:600; font-size:12px;">Driver is waiting for you</span>`;
+  } else if (isLateCancel) {
+    actionHtml = `
+      <div style="color:#d9534f; font-weight:600; font-size:11px; margin-bottom:4px;">
+        Driver is arriving, please wait (fee ${penaltyAmount} ₸)
+      </div>
+      <button class="btn danger small" data-act="cancel" data-id="${r.ride_id}" data-penalty="${penaltyAmount}" data-driver-comp="${driverComp}" data-company-risk="${companyRisk}">
+        Cancel (${penaltyAmount} ₸)
+      </button>
+    `;
+  } else {
+    actionHtml = `<button class="btn danger small" data-act="cancel" data-id="${r.ride_id}" data-penalty="0">Cancel ride</button>`;
+  }
 
   return `<div class="card confirm" style="display: flex; justify-content: space-between; align-items: center;">
     <div style="flex: 1;">
       <div>
-        <div class="ride-id">ride #${r.ride_id}</div> 
-        ${esc(r.start_time)} 
+        <div class="ride-id">ride #${r.ride_id}</div>
+        ${esc(r.start_time)}
         <span class="live"><i></i>${topStatusText}</span>
       </div>
       <h3 style="margin: 6px 0;">${esc(r.driver_name)} <span class="stars">★ ${Number(r.driver_rating).toFixed(1)}</span> <span class="muted" style="font-size:12px">(${esc(r.car_model)}, ${esc(r.car_color || "")})  ${plate(r.plate_number)}</span></h3>
       <div class="muted"><b>${esc(r.pickup_address)}</b> → ${esc(r.dropoff_address)}</div>
     </div>
-    <div style="text-align: right; min-width: 220px;">
-      <div class="eta" style="margin-bottom: 6px;">${isArrived ? 'Arrived' : `arrives in ~${currentEta} min`}</div>
-      <div>
-        ${isCancelLocked 
-          ? `<span style="color:#d9534f; font-weight:600; font-size:11px;"> ${lockMessage}</span>`
-          : `<button class="btn danger small" data-act="cancel" data-id="${r.ride_id}">Cancel ride</button>`
-        }
-      </div>
+    <div style="text-align: right; min-width: 230px;">
+      <div class="eta" style="margin-bottom: 6px;">${isArrived ? "Driver is waiting for you" : `arrives in ~${currentEta} min`}</div>
+      <div>${actionHtml}</div>
     </div>
   </div>`;
+
 }
 
 
@@ -315,25 +370,58 @@ function rideBanner(r) {
 async function syncRoute() {
   $("#pickupSelect").value = state.pickup;
   $("#dropoffSelect").value = state.dropoff;
-  $("#mapTip").textContent = !state.pickup ? "Click the pickup point, then the drop-off point"
-    : !state.dropoff ? "Now choose where to go" : `${state.pickup} → ${state.dropoff}`;
+  $("#mapTip").textContent = !state.pickup
+    ? "Click the pickup point, then the drop-off point"
+    : !state.dropoff
+      ? "Now choose where to go"
+      : `${state.pickup} → ${state.dropoff}`;
   drawMap();
+
   const box = $("#quoteBox");
+  const orderBtn = $("#orderBtn");
   state.quoteOk = false;
+
+  const hasUnpaidPenalty = Boolean(window.hasUnpaidPenalty);
+  if (hasUnpaidPenalty) {
+    orderBtn.dataset.blocked = "1";
+    orderBtn.disabled = false; // Обязательно false, чтобы клик доходил до формы
+    orderBtn.textContent = "Pay penalty to order";
+  } else {
+    orderBtn.dataset.blocked = "";
+    orderBtn.disabled = !state.quoteOk;
+    orderBtn.textContent = "Book a taxi";
+  }
+
   if (!state.pickup || !state.dropoff) {
     box.innerHTML = `<div class="quote-empty">Choose a route to see the price</div>`;
     return updateOrderBtn();
   }
+
   try {
-    const q = await api("/api/quote", { method: "POST", body: { pickup: state.pickup, dropoff: state.dropoff } });
+    const q = await api("/api/quote", {
+      method: "POST",
+      body: { pickup: state.pickup, dropoff: state.dropoff },
+    });
+
+    const basePrice = Number(q.price) || 0;
+    const unpaidPenalty = hasUnpaidPenalty ? calcLateCancelFee(basePrice) : 0;
+    const driverComp = Math.round(unpaidPenalty * 0.75);
+    const companyRisk = Math.max(0, unpaidPenalty - driverComp);
+    const finalPrice = basePrice + unpaidPenalty;
+
+    const penaltyLine = unpaidPenalty > 0
+      ? `<li class="extra"><span>Late cancel penalty (driver ${driverComp} ₸ / company risk ${companyRisk} ₸)</span><b>+${money(unpaidPenalty)}</b></li>`
+      : "";
+
     box.innerHTML = `<div class="quote-wrap">
       <div class="quote-body">
         <div class="quote-meta">${q.distance_km} km · ~${q.minutes} min ride</div>
-        <div class="quote-price">${money(q.price)}</div>
+        <div class="quote-price">${money(finalPrice)}</div>
       </div>
       <ul class="price-lines">${q.lines.map(l => `<li class="${l.rule && !["base", "per_km"].includes(l.rule) ? "extra" : ""}">
         <span>${esc(l.label)}</span><b>${l.kzt >= 0 && l.rule && !["base", "per_km"].includes(l.rule) ? "+" : ""}${money(l.kzt)}</b></li>`).join("")}
-        <li class="total"><span>Total</span><b>${money(q.price)}</b></li></ul>
+        ${penaltyLine}
+        <li class="total"><span>Total</span><b>${money(finalPrice)}</b></li></ul>
     </div>`;
     state.quoteOk = true;
   } catch (err) {
@@ -341,6 +429,7 @@ async function syncRoute() {
   }
   updateOrderBtn();
 }
+
 function updateOrderBtn() {
     const btn = $("#orderBtn");
     const blocked = btn.dataset.blocked === "1";
@@ -353,29 +442,88 @@ $("#dropoffSelect").addEventListener("change", e => { state.dropoff = e.target.v
 $("#swapBtn").addEventListener("click", () => { [state.pickup, state.dropoff] = [state.dropoff, state.pickup]; syncRoute(); });
 
 $("#orderForm").addEventListener("submit", async e => {
-    e.preventDefault();
-    const btn = $("#orderBtn");
+  e.preventDefault();
+  const btn = $("#orderBtn");
 
-    if (btn.dataset.blocked === "1") {
-        alert("You already have an active ride! You cannot book a second one.");
-        return;
+  if (btn.textContent.includes("Pay penalty") || btn.dataset.blocked === "1" || window.hasUnpaidPenalty) {
+      const payDlg = $("#payPenaltyDialog");
+      if (payDlg) {
+          payDlg.showModal();
+      } else {
+          alert("Please pay your cancellation penalty first.");
+      }
+      return; // Стоп! Заказ не уйдет на сервер.
+  }
+
+  if (btn.dataset.blocked === "1") {
+    alert("You already have an active ride! You cannot book a second one.");
+    return;
+  }
+  
+  const hasUnpaidPenalty = window.hasUnpaidPenalty || false; 
+
+    const orderBtn = $("#orderBtn");
+    if (hasUnpaidPenalty) {
+        orderBtn.dataset.blocked = "1";
+        orderBtn.disabled = false; // Оставляем кликабельной для вызова модалки
+        orderBtn.textContent = "Pay penalty to order";
     }
 
-    btn.disabled = true; 
-    btn.textContent = "Finding a driver...";
-    try {
-        const r = await api("/api/rides", { method: "POST", body: { pickup: state.pickup, dropoff: state.dropoff } });
-        toast(`Ride #${r.ride_id} booked`);
-        state.pickup = ""; state.dropoff = "";
-        await syncRoute();
-        await renderActiveBanner();
-        window.scrollTo({ top: 0, behavior: "smooth" });
-    } catch (err) {
-        alert("Warning: " + (err.message || "Failed to book a ride"));
-        toast(err.message, true);
-        updateOrderBtn();
+  btn.disabled = true;
+  btn.textContent = "Finding a driver...";
+   try {
+    const r = await api("/api/rides", { method: "POST", body: { pickup: state.pickup, dropoff: state.dropoff } });
+    toast(`Ride #${r.ride_id} booked`);
+    // Сохраняем ID поездки и открываем модалку предупреждения сразу при заказе
+    if (penaltyDialog) {
+        penaltyDialog.dataset.currentRideId = r.ride_id;
+        penaltyDialog.showModal();
     }
+    
+    state.pickup = "";
+    state.dropoff = "";
+    await syncRoute();
+    await renderActiveBanner();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } catch (err) {
+    alert("Warning: " + (err.message || "Failed to book a ride"));
+    toast(err.message, true);
+    updateOrderBtn();
+  }
 });
+
+const payPenaltyDialog = $("#payPenaltyDialog");
+const payPenaltyBtn = $("#payPenaltyBtn");
+const closePenaltyModal = $("#closePenaltyModal");
+
+if (closePenaltyModal) {
+    closePenaltyModal.addEventListener("click", () => {
+        payPenaltyDialog.close();
+    });
+}
+
+if (payPenaltyBtn) {
+    payPenaltyBtn.addEventListener("click", async () => {
+        try {
+            // Здесь отправляется запрос на бэкенд для списания/оплаты штрафа
+            // Например: await api("/api/pay-penalty", { method: "POST" });
+            
+            toast("Penalty paid successfully! You can now book a ride.");
+            window.hasUnpaidPenalty = false;
+            
+            // Снимаем блокировку с кнопки заказа
+            const orderBtn = $("#orderBtn");
+            orderBtn.dataset.blocked = "";
+            orderBtn.disabled = false;
+            orderBtn.textContent = "Book a taxi";
+            
+            payPenaltyDialog.close();
+            syncRoute(); // Пересчитываем маршрут
+        } catch (err) {
+            toast(err.message, true);
+        }
+    });
+}
 
 /* =========================== PASSENGER: MY RIDES =========================== */
 // five clickable stars (rendered 5..1 and reversed with CSS, so hover lights the stars up to the one under the mouse)
@@ -508,9 +656,30 @@ async function renderPricePanel() {
     <p class="muted" style="font-size:13px;margin:12px 0 0">Extra charges add up: a night ride from the airport pays the airport surcharge and the night fare.</p>`;
 }
 
-$("#pricesBtn").addEventListener("click", async () => {
-  try { await renderPricePanel(); $("#priceDialog").showModal(); } catch (err) { toast(err.message, true); }
-});
+const pricesBtn = $("#pricesBtn");
+const priceDialog = $("#priceDialog");
+const priceDialogClose = $("#priceDialogClose");
+
+if (pricesBtn && priceDialog && priceDialogClose) {
+  pricesBtn.addEventListener("click", async () => {
+    try {
+      await renderPricePanel();
+      priceDialog.showModal();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  priceDialogClose.addEventListener("click", () => {
+    priceDialog.close();
+  });
+
+  priceDialog.addEventListener("click", e => {
+    if (e.target.id === "priceDialog") {
+      priceDialog.close();
+    }
+  });
+}
 $("#priceDialogClose").addEventListener("click", () => $("#priceDialog").close());
 // a click on the dark background outside the window closes it too
 $("#priceDialog").addEventListener("click", e => { if (e.target.id === "priceDialog") e.target.close(); });
@@ -684,7 +853,25 @@ document.addEventListener("click", async e => {
 
       if (state.view === "book") hadActive = null;
 
-      toast(`Ride #${id} cancelled`);
+      const penalty = Number(b.dataset.penalty || 0);
+      const driverComp = Number(b.dataset.driverComp || 0);
+      const companyRisk = Number(b.dataset.companyRisk || 0);
+
+      if (penalty > 0) {
+        localStorage.setItem(`ride_cancel_penalty_${id}`, JSON.stringify({
+          rideId: id,
+          penalty,
+          driverComp,
+          companyRisk,
+          timestamp: Date.now()
+        }));
+        toast(
+          `Ride #${id} cancelled. Late cancellation fee: ${penalty} ₸ (driver compensation: ${driverComp} ₸, company risk/loss: ${companyRisk} ₸).`,
+          true
+        );
+      } else {
+        toast(`Ride #${id} cancelled`);
+      }
 
     } else if (action === "rate") {
       // Ratings 4-5 can be submitted immediately
