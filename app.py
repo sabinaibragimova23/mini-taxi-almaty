@@ -12,12 +12,15 @@ Reset: delete taxi.db and run again (or the admin "Reset demo data" button).
 Roles: passenger and driver log in by email (or phone) + password, admin by password
 (ADMIN_PASSWORD env variable, default: admin123).
 """
+import json
 import math
 import json
 import os
 import random
 import re
 import sqlite3
+import time
+import urllib.request
 from datetime import datetime, timedelta
 
 from flask import Flask, g, jsonify, request, send_from_directory
@@ -88,6 +91,12 @@ DEFAULT_FARE_RULES = [
     ("airport", "Airport surcharge", "surcharge", 400, "Pickup or drop-off at Almaty Airport"),
     ("night", "Night fare", "multiplier", 1.2, "23:00 - 06:00"),
     ("rush", "Rush hour", "multiplier", 1.1, "07:00 - 10:00 and 17:00 - 20:00 on weekdays"),
+    # live conditions (migration 007): see the CONDITIONS table below
+    ("traffic_moderate", "Moderate traffic", "multiplier", 1.15, "Admin sets city traffic to Moderate"),
+    ("traffic_heavy", "Heavy traffic", "multiplier", 1.3, "Admin sets city traffic to Heavy"),
+    ("accident", "Accident in the area", "multiplier", 1.2, "Accident in the district of the pickup or drop-off"),
+    ("rain", "Rain", "multiplier", 1.1, "It is raining in Almaty (live weather)"),
+    ("snow", "Snow", "multiplier", 1.25, "It is snowing in Almaty (live weather)"),
 ]
 CORE_RULES = ("base", "per_km", "minimum")   # always on: cannot be switched off
 
@@ -102,6 +111,70 @@ def insert_default_fares(con):
                        VALUES (?,?,?,?,?)""", DEFAULT_FARE_RULES)
 
 
+# ---------------------------------------------------------------------------
+# Live conditions: traffic and accidents are set by the admin, the weather comes
+# from the internet (Open-Meteo, free, no key) or is set by the admin. They are
+# stored in the CONDITIONS table (migration 007). Each one has a multiplier in FARE_RULES.
+# ---------------------------------------------------------------------------
+TRAFFIC_LEVELS = ("free", "moderate", "heavy")
+WEATHER_MODES = ("auto", "clear", "rain", "snow")
+DISTRICTS = sorted({p["district"] for p in PLACES})
+MAX_SURGE = 2.0                 # all multipliers together never raise a price more than x2
+ALMATY_LAT, ALMATY_LNG = 43.2389, 76.8897
+WEATHER_TTL = 600               # ask the weather service at most once per 10 minutes
+_weather_cache = {"at": 0.0, "data": None}
+DEFAULT_CONDITIONS = {"traffic": "free", "accident_district": "", "weather_mode": "auto"}
+
+
+def insert_default_conditions(con):
+    con.executemany("INSERT OR IGNORE INTO conditions(key, value) VALUES (?,?)", list(DEFAULT_CONDITIONS.items()))
+
+
+def weather_kind(code, rain_mm, snow_cm):
+    """WMO weather code from Open-Meteo -> 'snow', 'rain' or 'clear'."""
+    if snow_cm > 0 or code in (71, 73, 75, 77, 85, 86):
+        return "snow"
+    if rain_mm > 0 or code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99):
+        return "rain"
+    return "clear"
+
+
+def fetch_weather():
+    """Real weather in Almaty. Never raises: if the service is not available the weather is 'clear'.
+    Set WEATHER_AUTO=0 to switch this off (the tests do)."""
+    if os.environ.get("WEATHER_AUTO", "1") != "1":
+        return {"kind": "clear", "temp": None, "ok": False}
+    now = time.time()
+    if _weather_cache["data"] is not None and now - _weather_cache["at"] < WEATHER_TTL:
+        return _weather_cache["data"]
+    url = ("https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s"
+           "&current=temperature_2m,rain,snowfall,weather_code" % (ALMATY_LAT, ALMATY_LNG))
+    try:
+        with urllib.request.urlopen(url, timeout=3) as r:
+            cur = json.load(r)["current"]
+        data = {"kind": weather_kind(cur.get("weather_code") or 0, cur.get("rain") or 0, cur.get("snowfall") or 0),
+                "temp": cur.get("temperature_2m"), "ok": True}
+        _weather_cache.update(at=now, data=data)
+    except Exception:
+        data = {"kind": "clear", "temp": None, "ok": False}
+        _weather_cache.update(at=now - WEATHER_TTL + 60, data=data)   # try again in a minute
+    return data
+
+
+def current_conditions(con):
+    """What prices are based on right now."""
+    stored = dict(DEFAULT_CONDITIONS)
+    stored.update({r[0]: r[1] for r in con.execute("SELECT key, value FROM conditions")})
+    mode = stored["weather_mode"]
+    if mode == "auto":
+        w = fetch_weather()
+        weather, source, temp = w["kind"], ("internet" if w["ok"] else "unavailable"), w["temp"]
+    else:
+        weather, source, temp = mode, "admin", None
+    return {"traffic": stored["traffic"], "accident_district": stored["accident_district"],
+            "weather": weather, "weather_mode": mode, "weather_source": source, "temp": temp}
+
+
 def haversine_km(a, b):
     r = 6371.0
     dlat = math.radians(b["lat"] - a["lat"])
@@ -111,8 +184,10 @@ def haversine_km(a, b):
     return 2 * r * math.asin(math.sqrt(h))
 
 
-def quote(pickup_name, dropoff_name, when=None, rules=None):
-    """Price of a ride, calculated from the FARE_RULES table, with a line for every charge."""
+def quote(pickup_name, dropoff_name, when=None, rules=None, conditions=None):
+    """Price of a ride, calculated from the FARE_RULES table, with a line for every charge.
+    conditions = current_conditions(...) adds traffic / accident / weather. Without it only the
+    time-based rules apply (used for old demo rides and in tests)."""
     a, b = PLACE_BY_NAME.get(pickup_name), PLACE_BY_NAME.get(dropoff_name)
     if not a or not b:
         raise ValueError("Choose pickup and drop-off points from the list")
@@ -143,11 +218,24 @@ def quote(pickup_name, dropoff_name, when=None, rules=None):
 
     night = when.hour >= 23 or when.hour < 6
     rush = when.weekday() < 5 and (7 <= when.hour < 10 or 17 <= when.hour < 20)
-    for key, applies in (("night", night), ("rush", rush)):
+    steps = [("night", night), ("rush", rush)]
+    if conditions:
+        acc = conditions.get("accident_district") or ""
+        steps += [("traffic_moderate", conditions.get("traffic") == "moderate"),
+                  ("traffic_heavy", conditions.get("traffic") == "heavy"),
+                  ("accident", bool(acc) and acc in (a["district"], b["district"])),
+                  ("rain", conditions.get("weather") == "rain"),
+                  ("snow", conditions.get("weather") == "snow")]
+    total_factor, applied = 1.0, []
+    for key, applies in steps:
         if applies and on(key):
-            factor = rules[key]["amount"]
-            add(key, f"{rules[key]['name']} x{factor:g}", price * (factor - 1))
+            factor = min(rules[key]["amount"], MAX_SURGE / total_factor)   # never more than x2 in total
+            if factor <= 1.0:
+                continue
+            add(key, f"{rules[key]['name']} x{round(factor, 2):g}", price * (factor - 1))
             price *= factor
+            total_factor *= factor
+            applied.append(key)
 
     rounded = int(round(price / 10.0)) * 10
     minimum = rules["minimum"]["amount"]
@@ -166,6 +254,7 @@ def quote(pickup_name, dropoff_name, when=None, rules=None):
         "rush": rush and on("rush"),
         "mountain": mountain and on("mountain"),
         "airport": airport and on("airport"),
+        "extras": applied,
     }
 
 
@@ -202,7 +291,8 @@ def init_db(force=False):
     else:
         migrate_auth(con)
         migrate_shifts(con)
-        insert_default_fares(con)   # migration 005: fills fare_rules once
+        insert_default_fares(con)   # migration 005: fills fare_rules once (and the new condition prices)
+        insert_default_conditions(con)   # migration 007
     con.commit()
     con.close()
 
@@ -241,6 +331,7 @@ def migrate_shifts(con):
 def seed(con):
     rnd = random.Random(2026)
     insert_default_fares(con)
+    insert_default_conditions(con)
     con.row_factory = sqlite3.Row
     fare_rules = load_fare_rules(con)
     passengers = [
@@ -478,7 +569,7 @@ def api_places():
 def api_quote():
     b = body()
     try:
-        return jsonify(quote(b.get("pickup"), b.get("dropoff")))
+        return jsonify(quote(b.get("pickup"), b.get("dropoff"), conditions=current_conditions(get_db())))
     except ValueError as e:
         return bad(str(e))
 
@@ -600,7 +691,7 @@ def book_ride():
     if db.execute("SELECT 1 FROM rides WHERE passenger_id=? AND status='requested'", (pid,)).fetchone():
         return bad("You already have an active ride", 409)
     try:
-        q = quote(b.get("pickup"), b.get("dropoff"))
+        q = quote(b.get("pickup"), b.get("dropoff"), conditions=current_conditions(db))
     except ValueError as e:
         return bad(str(e))
     # an online, free driver with a car, highest rating first
@@ -1064,6 +1155,44 @@ def report_hours():
     since = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M")
     data = rows(get_db().execute(HOURS_SQL, {"now": now_str(), "since": since}))
     return jsonify({"since": since, "sql": HOURS_SQL, "rows": data})
+
+
+@app.get("/api/conditions")
+def get_conditions():
+    """Traffic, accident and weather right now (public: the map shows them to everybody)."""
+    db = get_db()
+    c = current_conditions(db)
+    c["districts"] = DISTRICTS
+    c["rates"] = {r["rule_key"]: r["amount"] for r in db.execute(
+        "SELECT rule_key, amount FROM fare_rules WHERE active=1 AND rule_key IN "
+        "('traffic_moderate','traffic_heavy','accident','rain','snow')")}
+    return jsonify(c)
+
+
+@app.post("/api/conditions")
+@require("admin")
+def set_conditions():
+    """Admin sets the traffic, the district with an accident and the weather mode."""
+    db, b = get_db(), body()
+    new = {}
+    if "traffic" in b:
+        if b["traffic"] not in TRAFFIC_LEVELS:
+            return bad("Traffic must be free, moderate or heavy")
+        new["traffic"] = b["traffic"]
+    if "accident_district" in b:
+        if b["accident_district"] not in ("",) + tuple(DISTRICTS):
+            return bad("Unknown district")
+        new["accident_district"] = b["accident_district"]
+    if "weather_mode" in b:
+        if b["weather_mode"] not in WEATHER_MODES:
+            return bad("Weather must be auto, clear, rain or snow")
+        new["weather_mode"] = b["weather_mode"]
+    for k, v in new.items():
+        db.execute("INSERT INTO conditions(key, value, updated_at) VALUES (?,?,?) "
+                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                   (k, v, now_str()))
+    db.commit()
+    return get_conditions()
 
 
 @app.get("/api/fares")

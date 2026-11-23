@@ -18,6 +18,9 @@ To reset: log in as admin and press "Reset demo data" at the bottom, or delete `
 
 ## Roles and login
 
+Guests see the map first. The top menu has the three roles (Passenger, Driver, Admin) and Sign up.
+
+
 On the login screen you pick a role. The server checks the role on every request: a wrong
 role or someone else's ride gets a 403.
 
@@ -42,7 +45,7 @@ An existing `taxi.db` is upgraded automatically on start (see `migrations/`).
 - `app.py`: backend (Flask, REST API, fare, demo data)
 - `schema.sql`: tables, PK, FK, CHECK constraints
 - `queries.sql`: SQL queries for the presentation (Section 8)
-- `static/`: frontend: `index.html`, `style.css`, `app.js`
+- `static/`: frontend: `index.html`, `style.css`, `app.js` (the map is Leaflet + OpenStreetMap, loaded from a CDN, no API key)
 
 ## API
 
@@ -57,6 +60,8 @@ An existing `taxi.db` is upgraded automatically on start (see `migrations/`).
 | GET | /api/driver/rides, /api/driver/earnings | driver | own rides, own earnings |
 | POST | /api/driver/online, /api/driver/offline | driver | start / end a shift |
 | GET | /api/fares | everyone | active prices for the price panel |
+| GET | /api/conditions | everyone | traffic, accident district and weather right now |
+| POST | /api/conditions | admin | set `{traffic, accident_district, weather_mode}` |
 | GET / POST | /api/fare_rules, /api/fare_rules/:key | admin | all prices / change a price or switch it on/off |
 | GET | /api/driver_shifts, /api/reports/driver-hours | admin | all shifts, hours online per driver (7 days) |
 | POST | /api/rides/:id/complete | driver (own) | complete + payment `{method}` in one transaction |
@@ -79,6 +84,23 @@ and passengers see them in the price panel under the booking form.
 | Airport surcharge | +400 ₸ | Almaty Airport |
 | Night fare | ×1.2 | 23:00–06:00 |
 | Rush hour | ×1.1 | 07:00–10:00 and 17:00–20:00 on weekdays |
+
+### Traffic, accidents and weather (migration 007)
+
+The price also depends on live conditions. They are stored in the `conditions` table, each has its own
+multiplier in `fare_rules`, and the admin can change or switch off every one in the **Prices** tab.
+
+| Condition | Who sets it | Multiplier |
+|---|---|---|
+| Moderate traffic / Heavy traffic | admin (Prices tab, "Traffic") | ×1.15 / ×1.3 |
+| Accident in the area | admin (Prices tab, "Accident in district"): applies if the pickup or the drop-off is in that district | ×1.2 |
+| Rain / Snow | automatic from the internet ([Open-Meteo](https://open-meteo.com), free, no key, checked every 10 minutes); the admin can set it by hand | ×1.1 / ×1.25 |
+
+All multipliers together (night, rush hour and the conditions) never raise a price more than ×2.
+If the weather service is not available, the weather counts as clear and prices still work.
+Set `WEATHER_AUTO=0` to switch the internet weather off (the tests do this in `conftest.py`).
+
+The map on the home page and on the booking page shows the weather, the traffic and the district with an accident.
 
 The passenger sees every line of the price before booking. A booked ride keeps its price in `rides.price`,
 so a later price change does not touch it.

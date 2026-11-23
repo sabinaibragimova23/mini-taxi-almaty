@@ -82,3 +82,12 @@ CREATE TABLE IF NOT EXISTS fare_rules (
     updated_at TEXT,
     CHECK (kind <> 'multiplier' OR amount BETWEEN 1 AND 3)
 );
+
+-- Live conditions that change the price (migration 007).
+-- keys: traffic (free / moderate / heavy), accident_district ('' or a district name),
+--       weather_mode (auto = from the internet, or clear / rain / snow set by the admin)
+CREATE TABLE IF NOT EXISTS conditions (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT
+);

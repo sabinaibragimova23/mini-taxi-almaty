@@ -39,7 +39,7 @@ function plate(p) {
 }
 const badge = s => s ? `<span class="badge ${s}">${LABEL_TXT[s] || esc(s)}</span>` : "";
 
-const state = { me: null, places: [], pickup: "", dropoff: "", table: "passengers", rideFilter: "", view: null };
+const state = { me: null, places: [], pickup: "", dropoff: "", table: "passengers", rideFilter: "", view: null, loginRole: "passenger", cond: null };
 
 /* =========================== ROLES & NAVIGATION =========================== */
 const ROLE_VIEWS = {
@@ -49,14 +49,17 @@ const ROLE_VIEWS = {
 };
 const ROLE_NAME = { passenger: "Passenger", driver: "Driver", admin: "Admin" };
 const LOADERS = {
-  login: loadLogin, book: loadBook, myrides: loadMyRides, orders: loadOrders, earnings: loadEarnings,
+  home: loadHome, login: loadLogin, book: loadBook, myrides: loadMyRides, orders: loadOrders, earnings: loadEarnings,
   dispatch: loadDispatch, prices: loadPrices, db: loadTable, reports: loadReports, access: renderAccess,
 };
 
 function renderShell() {
   const me = state.me;
   const views = me ? ROLE_VIEWS[me.role] : [];
-  $("#tabs").innerHTML = views.map(([v, label]) => `<button data-view="${v}">${label}${v === "myrides" || v === "orders" || v === "dispatch" ? ' <span class="pill" data-count hidden></span>' : ""}</button>`).join("");
+  const guestNav = `<button data-view="home">Map</button><span class="nav-label">Log in as</span>`
+    + ["passenger", "driver", "admin"].map(r => `<button data-view="login" data-loginrole="${r}">${ROLE_NAME[r]}</button>`).join("")
+    + `<button class="signup-tab" data-signup>Sign up</button>`;
+  $("#tabs").innerHTML = !me ? guestNav : views.map(([v, label]) => `<button data-view="${v}">${label}${v === "myrides" || v === "orders" || v === "dispatch" ? ' <span class="pill" data-count hidden></span>' : ""}</button>`).join("");
   $("#brandRole").textContent = me ? "Almaty · " + ROLE_NAME[me.role] : "Almaty";
   const chip = $("#userChip");
   chip.hidden = !me;
@@ -66,15 +69,32 @@ function renderShell() {
 }
 
 function show(view) {
-  const allowed = state.me ? ROLE_VIEWS[state.me.role].map(v => v[0]) : ["login"];
+  const allowed = state.me ? ROLE_VIEWS[state.me.role].map(v => v[0]) : ["home", "login"];
   if (!allowed.includes(view)) view = allowed[0];
   state.view = view;
-  $$("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.view === view));
+  if (view === "login") {   // one login card at a time: the role chosen in the top menu
+    $("#view-login").dataset.role = state.loginRole;
+    $("#loginTitle").textContent = LOGIN_TEXT[state.loginRole][0];
+    $("#loginSub").textContent = LOGIN_TEXT[state.loginRole][1];
+  }
+  $$("#tabs button").forEach(b => b.classList.toggle("active",
+    b.dataset.view === view && (!b.dataset.loginrole || b.dataset.loginrole === state.loginRole)));
   $$(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + view));
   if (location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
   LOADERS[view]?.().catch(err => toast(err.message, true));
 }
-$("#tabs").addEventListener("click", e => { const b = e.target.closest("button"); if (b) show(b.dataset.view); });
+$("#tabs").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.signup !== undefined) return openSignup();
+  if (b.dataset.loginrole) state.loginRole = b.dataset.loginrole;
+  show(b.dataset.view);
+});
+const LOGIN_TEXT = {
+  passenger: ["Passenger log in", "Book a taxi and see your trips."],
+  driver: ["Driver log in", "Complete assigned rides and see your earnings."],
+  admin: ["Admin log in", "Tables, rides and monthly reports."],
+};
 $("#userChip").addEventListener("click", e => { if (e.target.id === "logoutBtn") logout(); });
 
 async function refreshMe() {
@@ -96,7 +116,7 @@ function logout(expired = false) {
   store.set(null);
   state.me = null;
   renderShell();
-  show("login");
+  show("home");
   if (expired) toast("Session expired, please log in again", true);
 }
 
@@ -129,11 +149,18 @@ $$(".role-card").forEach(form => {
     form.requestSubmit();
   });
 });
-$("#signupBtn").addEventListener("click", () => openModal(`
+function openSignup() {
+  openModal(`
   <h2>Create an account</h2><p class="muted">Adds a row to PASSENGERS.</p>
   ${passengerFields()}
   <div class="actions"><button class="btn ghost" value="cancel" formnovalidate>Cancel</button><button class="btn primary">Sign up</button></div>`,
-  async fd => { const r = await api("/api/signup", { method: "POST", body: Object.fromEntries(fd) }); await afterLogin(r.token); }));
+  async fd => { const r = await api("/api/signup", { method: "POST", body: Object.fromEntries(fd) }); await afterLogin(r.token); });
+}
+$("#signupBtn").addEventListener("click", openSignup);
+document.addEventListener("click", e => {
+  if (e.target.closest("[data-goto-login]")) { e.preventDefault(); state.loginRole = "passenger"; show("login"); }
+  if (e.target.closest("[data-goto-signup]")) { e.preventDefault(); openSignup(); }
+});
 
 function passengerFields() {
   return `<label class="field"><span>full_name</span><input type="text" name="full_name" placeholder="e.g. Aidana Serikova" required></label>
@@ -153,74 +180,113 @@ function openModal(html, onSubmit) {
   dlg.showModal();
 }
 
-/* =========================== MAP =========================== */
-const BBOX = { minLng: 76.80, maxLng: 77.11, minLat: 43.10, maxLat: 43.375 };
-const W = 800, H = 560;
-const px = lng => ((lng - BBOX.minLng) / (BBOX.maxLng - BBOX.minLng)) * W;
-const py = lat => ((BBOX.maxLat - lat) / (BBOX.maxLat - BBOX.minLat)) * H;
-// label offsets [dx, dy, anchor] so labels don't overlap in the centre
-const LABEL = {
-  bazaar: [12, -6, "start"], panfilov: [12, 12, "start"], arbat: [-11, -8, "end"], kbtu: [-11, 8, "end"],
-  almaty2: [-11, -4, "end"], republic: [0, -11, "middle"], dostyk: [10, 15, "start"], koktobe: [12, 2, "start"],
-  satbayev: [-11, -6, "end"], stadium: [-11, 10, "end"], kaznu: [-11, 2, "end"], esentai: [11, 6, "start"],
-  botanic: [-11, 12, "end"], mega: [-11, 10, "end"], sairan: [0, -14, "middle"], arena: [0, 22, "middle"],
-  medeu: [12, 4, "start"], shymbulak: [12, 4, "start"], airport: [-12, 4, "end"], almaty1: [12, 4, "start"],
-};
-const STREETS = [
-  { name: "Raiymbek Ave", lat: 43.2665, h: true },
-  { name: "Abay Ave", lat: 43.2405, h: true },
-  { name: "Al-Farabi Ave", lat: 43.2195, h: true },
-  { name: "Dostyk Ave", lng: 76.9585, v: true, from: 43.215, to: 43.31 },
-  { name: "Sain St", lng: 76.857, v: true, from: 43.2, to: 43.3 },
-  { name: "Seifullin Ave", lng: 76.9375, v: true, from: 43.215, to: 43.34 },
-];
+/* =========================== MAP (Leaflet + OpenStreetMap, no API key) =========================== */
+let homeMap = null, bookMap = null;
 
-function drawMap() {
-  let g = `<defs><pattern id="grid" width="26" height="26" patternUnits="userSpaceOnUse" patternTransform="rotate(-4)">
-          <path d="M26 0H0V26" fill="none" stroke="#dfe5ef" stroke-width="1"/></pattern>
-        <linearGradient id="mtn" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5d7fa8"/><stop offset="1" stop-color="#2f527a"/></linearGradient></defs>
-        <rect width="${W}" height="${H}" fill="url(#grid)"/>`;
-  const ridge = [[0, 470], [60, 440], [110, 455], [170, 420], [230, 445], [300, 405], [360, 430], [420, 390], [470, 412], [530, 372], [590, 400], [650, 360], [700, 380], [760, 345], [800, 360], [800, 560], [0, 560]];
-  g += `<path d="M${ridge.map(p => p.join(" ")).join(" L")}Z" fill="url(#mtn)" opacity=".9"/>`;
-  g += `<path d="M300 405 L312 420 L292 418Z M420 390 L433 404 L410 403Z M530 372 L545 388 L519 386Z M650 360 L664 374 L638 373Z M760 345 L774 358 L748 358Z" fill="#fff"/>`;
-  g += `<text x="${W - 16}" y="${H - 16}" text-anchor="end" font-family="Manrope" font-size="12" font-weight="700" fill="#fff" opacity=".8" letter-spacing="2">ILE ALATAU</text>`;
-  g += `<path d="M${px(76.935)} ${py(43.18)} C ${px(76.93)} ${py(43.23)}, ${px(76.945)} ${py(43.27)}, ${px(76.94)} ${py(43.36)}" fill="none" stroke="#b9d3ee" stroke-width="3"/>`;
-  for (const s of STREETS) {
-    if (s.h) {
-      const y = py(s.lat);
-      g += `<line x1="0" y1="${y}" x2="${W}" y2="${y + 18}" stroke="#fff" stroke-width="6"/><line x1="0" y1="${y}" x2="${W}" y2="${y + 18}" stroke="#cdd7e6" stroke-width="1"/>
-            <text x="8" y="${y - 5}" font-size="10.5" fill="#8a96ad" font-family="Manrope" font-weight="600">${s.name}</text>`;
-    } else {
-      const x = px(s.lng);
-      g += `<line x1="${x}" y1="${py(s.to)}" x2="${x + 6}" y2="${py(s.from)}" stroke="#fff" stroke-width="6"/><line x1="${x}" y1="${py(s.to)}" x2="${x + 6}" y2="${py(s.from)}" stroke="#cdd7e6" stroke-width="1"/>
-            <text transform="translate(${x - 4} ${py(s.to) + 6}) rotate(90)" font-size="10.5" fill="#8a96ad" font-family="Manrope" font-weight="600">${s.name}</text>`;
-    }
+function makeMap(el) {
+  if (typeof L === "undefined") {
+    el.innerHTML = `<p class="muted" style="padding:24px">The map could not be loaded. Check your internet connection and reload the page.</p>`;
+    return null;
   }
-  const a = state.places.find(p => p.name === state.pickup), b = state.places.find(p => p.name === state.dropoff);
-  if (a && b) {
-    const x1 = px(a.lng), y1 = py(a.lat), x2 = px(b.lng), y2 = py(b.lat);
-    const mx = (x1 + x2) / 2 + (y2 - y1) * 0.18, my = (y1 + y2) / 2 - (x2 - x1) * 0.18;
-    g += `<path class="route-path" d="M${x1} ${y1} Q${mx} ${my} ${x2} ${y2}"/>`;
-  }
-  for (const p of state.places) {
-    const [dx, dy, anchor] = LABEL[p.id] || [12, 4, "start"];
-    const cls = p.name === state.pickup ? "a" : p.name === state.dropoff ? "b" : "";
-    const inMountains = p.id === "medeu" || p.id === "shymbulak";
-    g += `<g class="pt ${cls}" data-name="${esc(p.name)}" transform="translate(${px(p.lng)} ${py(p.lat)})">
-            <circle r="16" fill="transparent"/><circle class="core" r="6.5"/>
-            <text x="${dx}" y="${dy}" text-anchor="${anchor}" ${inMountains ? 'style="fill:#fff;stroke:#2f527a"' : ""}>${esc(p.name)}</text>
-          </g>`;
-  }
-  $("#map").innerHTML = g;
+  const map = L.map(el, { zoomControl: false }).setView([43.2389, 76.8897], 12);
+  L.control.zoom({ position: "bottomright" }).addTo(map);   // top-left is taken by the card on the home page
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap contributors" }).addTo(map);
+  return { map, layer: L.layerGroup().addTo(map), fitted: false };
 }
-$("#map").addEventListener("click", e => {
-  const pt = e.target.closest(".pt");
-  if (!pt) return;
-  const name = pt.dataset.name;
+function fitOnce(m) {
+  m.map.invalidateSize();   // the map was hidden while the page was on another tab
+  if (!m.fitted && state.places.length) {
+    m.map.fitBounds(state.places.map(p => [p.lat, p.lng]), { padding: [30, 30] });
+    m.fitted = true;
+  }
+}
+const inAccident = p => state.cond && state.cond.accident_district && state.cond.accident_district === p.district;
+function pointStyle(role, hot) {
+  const s = { radius: 7, weight: 2.5, color: "#1F4E79", fillColor: "#fff", fillOpacity: 1 };
+  if (role === "a") Object.assign(s, { radius: 10, color: "#fff", fillColor: "#4472C4" });
+  if (role === "b") Object.assign(s, { radius: 10, color: "#fff", fillColor: "#E07A2E" });
+  if (hot) Object.assign(s, { color: "#c0392b", weight: 4, radius: s.radius + 2 });   // district with an accident
+  return s;
+}
+
+/* home page: all pickup points, click a point to read about it */
+function drawHomeMap() {
+  homeMap ||= makeMap($("#homeMap"));
+  if (!homeMap) return;
+  fitOnce(homeMap);
+  homeMap.layer.clearLayers();
+  for (const p of state.places) {
+    const hot = inAccident(p);
+    L.circleMarker([p.lat, p.lng], pointStyle("", hot)).addTo(homeMap.layer)
+      .bindTooltip(esc(p.name), { direction: "top", offset: [0, -6] })
+      .bindPopup(`<b>${esc(p.name)}</b><br><span class="muted">${esc(p.district)} district${hot ? " · accident" : ""}</span><br><a href="#login" data-goto-login>Log in to book a taxi</a>`);
+  }
+}
+
+/* booking page: click the pickup point, then the drop-off point */
+function drawMap() {
+  bookMap ||= makeMap($("#map"));
+  if (!bookMap) return;
+  fitOnce(bookMap);
+  const { layer } = bookMap;
+  layer.clearLayers();
+  const a = state.places.find(p => p.name === state.pickup), b = state.places.find(p => p.name === state.dropoff);
+  if (a && b) L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { color: "#1F4E79", weight: 4, dashArray: "9 8" }).addTo(layer);
+  for (const p of state.places) {
+    const role = p.name === state.pickup ? "a" : p.name === state.dropoff ? "b" : "";
+    L.circleMarker([p.lat, p.lng], pointStyle(role, inAccident(p))).addTo(layer)
+      .bindTooltip(esc(p.name), { permanent: !!role, direction: "top", offset: [0, -8], className: "pt-tip " + role })
+      .on("click", () => pickPlace(p.name));
+  }
+}
+function pickPlace(name) {
   if (!state.pickup || (state.pickup && state.dropoff)) { state.pickup = name; state.dropoff = ""; }
   else if (name !== state.pickup) state.dropoff = name;
   syncRoute();
-});
+}
+
+/* traffic, accident and weather: shown on the map pages, set by the admin / the weather service */
+const WEATHER_TXT = { clear: "Clear", rain: "Rain", snow: "Snow" };
+const WEATHER_ICO = { clear: "☀", rain: "🌧", snow: "❄" };
+const TRAFFIC_TXT = { free: "Roads are free", moderate: "Moderate traffic", heavy: "Heavy traffic" };
+function condBarHtml(c) {
+  if (!c) return "";
+  const parts = [
+    `<span class="cchip w-${c.weather}">${WEATHER_ICO[c.weather]} ${WEATHER_TXT[c.weather]}${c.temp != null ? " " + Math.round(c.temp) + "°C" : ""}</span>`,
+    `<span class="cchip t-${c.traffic}"><i></i>${TRAFFIC_TXT[c.traffic]}</span>`,
+  ];
+  if (c.accident_district) parts.push(`<span class="cchip acc">⚠ Accident: ${esc(c.accident_district)} district</span>`);
+  const extra = c.traffic !== "free" || c.accident_district || c.weather !== "clear";
+  parts.push(`<span class="cnote">${extra ? "Extra charges may apply to your ride" : "No extra charges for traffic or weather right now"}</span>`);
+  return parts.join("");
+}
+function renderCondBars() {
+  for (const id of ["#condHome", "#condBook"]) $(id).innerHTML = condBarHtml(state.cond);
+}
+async function loadConditions() {
+  state.cond = await api("/api/conditions");
+  renderCondBars();
+  return state.cond;
+}
+async function ensurePlaces() {
+  if (state.places.length) return;
+  state.places = await api("/api/places");
+  $("#pickupSelect").innerHTML = placeOptions("Pickup point");
+  $("#dropoffSelect").innerHTML = placeOptions("Where to?");
+}
+async function loadHome() {
+  await ensurePlaces();
+  await loadConditions().catch(() => {});
+  drawHomeMap();
+}
+/* every minute: if the admin or the weather changed something, update the map and the price */
+setInterval(async () => {
+  if (document.hidden || !["home", "book"].includes(state.view)) return;
+  const before = JSON.stringify(state.cond);
+  try { await loadConditions(); } catch { return; }
+  if (JSON.stringify(state.cond) === before) return;
+  if (state.view === "home") drawHomeMap(); else syncRoute();
+}, 60000);
 
 /* =========================== PASSENGER: BOOK =========================== */
 function placeOptions(placeholder) {
@@ -231,11 +297,8 @@ function placeOptions(placeholder) {
 }
 
 async function loadBook() {
-  if (!state.places.length) {
-    state.places = await api("/api/places");
-    $("#pickupSelect").innerHTML = placeOptions("Pickup point");
-    $("#dropoffSelect").innerHTML = placeOptions("Where to?");
-  }
+  await ensurePlaces();
+  await loadConditions().catch(() => {});
   $("#greeting").textContent = `Where to, ${state.me.name.split(" ")[0]}?`;
   syncRoute();
   await renderActiveBanner();
@@ -668,7 +731,7 @@ async function renderPricePanel() {
       <div><h3>Main fare</h3><table class="price-table">${main.map(row).join("")}</table></div>
       <div><h3>Extra charges</h3><table class="price-table">${extra.map(row).join("") || '<tr><td class="muted">No extra charges right now</td></tr>'}</table></div>
     </div>
-    <p class="muted" style="font-size:13px;margin:12px 0 0">Extra charges add up: a night ride from the airport pays the airport surcharge and the night fare.</p>`;
+    <p class="muted" style="font-size:13px;margin:12px 0 0">Extra charges add up: a night ride from the airport pays the airport surcharge and the night fare. Traffic, accidents and weather are added while they last; all extra charges together never raise the price more than ×2.</p>`;
 }
 
 const pricesBtn = $("#pricesBtn");
@@ -700,7 +763,36 @@ $("#priceDialogClose").addEventListener("click", () => $("#priceDialog").close()
 $("#priceDialog").addEventListener("click", e => { if (e.target.id === "priceDialog") e.target.close(); });
 
 /* admin: change prices, switch extra charges on and off */
+async function renderCondAdmin() {
+  const c = await loadConditions();
+  const opt = (v, t, cur) => `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(t)}</option>`;
+  const source = c.weather_mode !== "auto" ? "set by the admin"
+    : c.weather_source === "internet" ? "Open-Meteo, updated every 10 minutes" : "not available right now, treated as clear";
+  $("#condAdmin").innerHTML = `
+    <div class="cond-admin-head"><h3>Traffic, accidents and weather</h3>
+      <span class="muted">Passengers see this on the map. The matching extra charges are in the table below.</span></div>
+    <div class="cond-form">
+      <label class="field"><span>Traffic</span><select id="condTraffic">${opt("free", "Free roads", c.traffic)}${opt("moderate", "Moderate", c.traffic)}${opt("heavy", "Heavy", c.traffic)}</select></label>
+      <label class="field"><span>Accident in district</span><select id="condAccident">${opt("", "None", c.accident_district)}${c.districts.map(d => opt(d, d, c.accident_district)).join("")}</select></label>
+      <label class="field"><span>Weather</span><select id="condWeather">${opt("auto", "Auto (from the internet)", c.weather_mode)}${opt("clear", "Clear", c.weather_mode)}${opt("rain", "Rain", c.weather_mode)}${opt("snow", "Snow", c.weather_mode)}</select></label>
+      <button class="btn blue" id="condSave" type="button">Save</button>
+    </div>
+    <div class="cond-bar">${condBarHtml(c)}</div>
+    <p class="muted" style="font-size:12.5px;margin:8px 0 0">Weather source: ${source}. All extra charges together never raise a price more than ×2.</p>`;
+}
+$("#condAdmin").addEventListener("click", async e => {
+  if (e.target.id !== "condSave") return;
+  try {
+    await api("/api/conditions", { method: "POST", body: {
+      traffic: $("#condTraffic").value, accident_district: $("#condAccident").value, weather_mode: $("#condWeather").value } });
+    toast("Saved. New bookings use these conditions now.");
+    await renderCondAdmin();
+    await renderPriceExample();
+  } catch (err) { toast(err.message, true); }
+});
+
 async function loadPrices() {
+  await renderCondAdmin();
   const rules = await api("/api/fare_rules");
   const core = ["base", "per_km", "minimum"];
   $("#priceRules").innerHTML = `<thead><tr><th>Price</th><th>When it applies</th><th>Type</th><th>Amount</th><th>On</th><th>Last change</th><th></th></tr></thead><tbody>${

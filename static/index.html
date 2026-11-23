@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 <link rel="stylesheet" href="/static/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231F4E79'/><path d='M4 24 L12 12 L16 17 L21 9 L28 24Z' fill='%23FFF2CC'/><circle cx='24' cy='8' r='3' fill='%23E07A2E'/></svg>">
 </head>
@@ -31,11 +32,29 @@
 </header>
 
 <main>
+  <!-- ======================= HOME: MAP (guests) ======================= -->
+  <section class="view" id="view-home">
+    <div class="card home-card">
+      <div class="home-wrap">
+        <div id="homeMap" class="leaflet-box" aria-label="Almaty map with taxi pickup points"></div>
+        <div class="home-overlay">
+          <h1>Taxi in Almaty</h1>
+          <p class="muted">Pick a point on the map, log in and book. The price already includes traffic, accidents and weather.</p>
+          <div class="home-actions">
+            <button type="button" class="btn primary" data-goto-login>Log in</button>
+            <button type="button" class="btn ghost" data-goto-signup>Sign up</button>
+          </div>
+        </div>
+      </div>
+      <div class="cond-bar" id="condHome"></div>
+    </div>
+  </section>
+
   <!-- ======================= LOGIN ======================= -->
-  <section class="view" id="view-login">
+  <section class="view" id="view-login" data-role="passenger">
     <div class="login-head">
-      <h1>Log in</h1>
-      <p class="muted">Choose your role. Passengers, drivers and the admin each have their own screens.</p>
+      <h1 id="loginTitle">Passenger log in</h1>
+      <p class="muted" id="loginSub">Book a taxi and see your trips.</p>
     </div>
     <div class="roles">
       <form class="card role-card" data-role="passenger">
@@ -63,7 +82,7 @@
         <div class="demo" id="adminHint"></div>
       </form>
     </div>
-    <p class="tip">You can log in as a passenger in one tab and as a driver in another.</p>
+    <p class="tip">Choose your role at the top. You can log in as a passenger in one tab and as a driver in another.</p>
   </section>
 
   <!-- ======================= PASSENGER: BOOK ======================= -->
@@ -73,6 +92,7 @@
       <form class="card order-card" id="orderForm" autocomplete="off">
         <h1 id="greeting">Where to?</h1>
         <p class="muted">Choose on the map or from the list.</p>
+        <div class="cond-bar" id="condBook"></div>
         <div class="route">
           <div class="route-line" aria-hidden="true"><i class="dot a"></i><i class="bar"></i><i class="dot b"></i></div>
           <div class="route-fields">
@@ -91,7 +111,7 @@
           <strong>Almaty map</strong>
           <span class="legend"><i class="dot a"></i>pickup <i class="dot b"></i>drop-off</span>
         </div>
-        <svg id="map" viewBox="0 0 800 560" role="img" aria-label="Almaty map with pickup points"></svg>
+        <div id="map" class="leaflet-box" aria-label="Almaty map with pickup points"></div>
         <p class="map-tip" id="mapTip">Click the pickup point, then the drop-off point</p>
       </div>
     </div>
@@ -103,6 +123,7 @@
       <h2>Prices and extra charges</h2>
       <p class="muted">Stored in the FARE_RULES table. New bookings use the new price at once; rides already booked keep their saved price.</p>
     </div>
+    <div class="card cond-admin" id="condAdmin"></div>
     <div class="prices-grid">
       <div class="card table-wrap"><table class="data" id="priceRules"></table></div>
       <div class="card side" id="priceExample"></div>
@@ -265,6 +286,7 @@
     </div>
 </dialog>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
