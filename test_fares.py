@@ -31,10 +31,11 @@ def quote_at(when, pickup, dropoff):
         return taxi_app.quote(pickup, dropoff, when)
 
 
-# TEST 1: the price panel lists all 7 prices, no login needed
+# TEST 1: the price panel lists all 12 prices (7 + 5 live conditions), no login needed
 def test_price_panel_lists_all_prices(client):
     fares = client.get("/api/fares").get_json()
-    assert {f["rule_key"] for f in fares} == {"base", "per_km", "minimum", "mountain", "airport", "night", "rush"}
+    assert {f["rule_key"] for f in fares} == {"base", "per_km", "minimum", "mountain", "airport", "night", "rush",
+                                              "traffic_moderate", "traffic_heavy", "accident", "rain", "snow"}
 
 
 # TEST 2: the lines of the price always add up to the total

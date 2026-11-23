@@ -271,7 +271,6 @@ table.data td.wrap { white-space: normal; min-width: 220px; }
 .user-chip .who small { color: var(--cream); font-size: 11px; }
 .user-chip .btn.ghost { background: rgba(255,255,255,.14); color: #fff; }
 .user-chip .btn.ghost:hover { background: rgba(255,255,255,.24); }
-body[data-role="guest"] .tabs { display: none; }
 
 .login-head { text-align: center; margin: 26px 0 22px; }
 .login-head h1 { font-size: 30px; }
@@ -525,4 +524,56 @@ table.matrix code { font-family: var(--mono); color: var(--navy); font-weight: 6
 @media (max-width: 520px) {
   .rating-feedback-modal { padding: 26px 20px; }
   .feedback-options { grid-template-columns: 1fr; }
+}
+
+/* ================= live map (Leaflet), conditions, guest menu ================= */
+.leaflet-container { font-family: var(--body); }
+.leaflet-box { width: 100%; border-radius: 12px; background: #eef2f8; z-index: 0; }
+#map.leaflet-box { height: 520px; }
+#homeMap.leaflet-box { height: clamp(420px, 66vh, 640px); border-radius: 14px; }
+.home-card { padding: 12px; }
+.home-wrap { position: relative; }
+.home-overlay { position: absolute; top: 14px; left: 14px; z-index: 1000; max-width: 320px; background: rgba(255,255,255,.96);
+  border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow); border: 1px solid var(--line); }
+.home-overlay h1 { font-size: 20px; margin-bottom: 6px; }
+.home-overlay p { margin: 0 0 12px; font-size: 13.5px; }
+.home-actions { display: flex; gap: 8px; }
+
+.cond-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 4px 2px; }
+.cchip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+  background: var(--blue-soft); color: var(--navy); font-size: 13px; font-weight: 700; }
+.cchip i { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); }
+.cchip.t-moderate i { background: #e0a82e; }
+.cchip.t-heavy i { background: var(--bad); }
+.cchip.t-heavy, .cchip.acc { background: #fbe9e7; color: var(--bad); }
+.cnote { font-size: 12.5px; color: var(--muted); }
+.pt-tip { font: 700 12px var(--body); border-radius: 8px; border: 0; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+.pt-tip.a { background: var(--blue); color: #fff; }
+.pt-tip.a::before { border-top-color: var(--blue); }
+.pt-tip.b { background: var(--orange-2); color: #fff; }
+.pt-tip.b::before { border-top-color: var(--orange-2); }
+.leaflet-container a[data-goto-login] { color: var(--orange); font-weight: 700; }
+
+/* top menu for guests: Map | Log in as [Passenger] [Driver] [Admin] | Sign up */
+.nav-label { align-self: center; color: rgba(255,255,255,.55); font-size: 12px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em; margin: 0 4px 0 12px; }
+.tabs button.signup-tab { border: 1.5px solid rgba(255,255,255,.5); color: #fff; margin-left: 10px; }
+.tabs button.signup-tab:hover { background: rgba(255,255,255,.14); }
+
+/* login page: one role at a time, chosen in the top menu */
+#view-login .roles { display: flex; justify-content: center; }
+#view-login .role-card { display: none; width: min(440px, 100%); }
+#view-login[data-role="passenger"] .role-card[data-role="passenger"],
+#view-login[data-role="driver"] .role-card[data-role="driver"],
+#view-login[data-role="admin"] .role-card[data-role="admin"] { display: flex; }
+
+/* admin: traffic, accidents, weather */
+.cond-admin { padding: 18px; margin-bottom: 16px; }
+.cond-admin-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.cond-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 12px; align-items: end; }
+@media (max-width: 760px) {
+  .cond-form { grid-template-columns: 1fr; }
+  .home-wrap { display: flex; flex-direction: column-reverse; gap: 10px; }
+  .home-overlay { position: static; max-width: none; }
+  .nav-label { display: none; }
 }
