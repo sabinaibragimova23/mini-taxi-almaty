@@ -295,6 +295,15 @@ def init_db(force=False):
     con.execute("PRAGMA foreign_keys = ON")
     with open(SCHEMA_PATH, encoding="utf-8") as f:
         con.executescript(f.read())
+    # Migration 007 compatibility: older schema.sql files may not define CONDITIONS.
+    # Create it before seed()/insert_default_conditions() so existing databases upgrade safely.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS conditions (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT
+        )
+    """)
     if fresh:
         seed(con)
     else:
@@ -302,6 +311,7 @@ def init_db(force=False):
         migrate_shifts(con)
         insert_default_fares(con)   # migration 005: fills fare_rules once (and the new condition prices)
         insert_default_conditions(con)   # migration 007
+    migrate_review_timestamp(con)   # migration 008: original review submission time
     con.commit()
     con.close()
 
@@ -327,6 +337,13 @@ def migrate_auth(con):
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_email ON drivers(email)")
         for phone, mail in DEMO_DRIVER_EMAILS.items():
             con.execute("UPDATE drivers SET email=? WHERE phone=?", (mail, phone))
+
+
+def migrate_review_timestamp(con):
+    """Migration 008: store the original submission time for each ride review."""
+    cols = [r[1] for r in con.execute("PRAGMA table_info(rides)")]
+    if "rated_at" not in cols:
+        con.execute("ALTER TABLE rides ADD COLUMN rated_at TEXT")
 
 
 def migrate_shifts(con):
@@ -681,6 +698,53 @@ def me():
     return jsonify(out)
 
 
+def validate_review_payload(b):
+    """Validate and normalize a review payload for both create and edit."""
+    raw = b.get("rating")
+    if isinstance(raw, bool) or not isinstance(raw, (int, str)) or not str(raw).strip().isdigit():
+        return None, bad("Rating must be a whole number from 1 to 5")
+
+    rating = int(raw)
+    if not 1 <= rating <= 5:
+        return None, bad("Rating must be a whole number from 1 to 5")
+
+    comment = b.get("comment", "")
+    if comment is None:
+        comment = ""
+    if not isinstance(comment, str):
+        return None, bad("Comment must be text")
+    comment = comment.strip()
+    if len(comment) > 1000:
+        return None, bad("Comment must not exceed 1000 characters")
+
+    raw_tags = b.get("feedback_tags", [])
+    if raw_tags is None:
+        raw_tags = []
+    if not isinstance(raw_tags, list) or any(not isinstance(tag, str) for tag in raw_tags):
+        return None, bad("Feedback options must be a list of text values")
+    tags = list(dict.fromkeys(tag.strip() for tag in raw_tags if tag.strip()))
+    allowed_tags = IMPROVEMENT_FEEDBACK_OPTIONS if rating <= 3 else POSITIVE_FEEDBACK_OPTIONS
+    if any(tag not in allowed_tags for tag in tags):
+        return None, bad("One or more feedback options are not valid for this rating")
+    if rating <= 3 and not tags and not comment:
+        return None, bad("Select at least one feedback option or leave a comment")
+
+    return {"rating": rating, "comment": comment, "tags": tags}, None
+
+
+def review_response(ride_id, rating, comment, tags, driver_id):
+    driver_rating = get_db().execute(
+        "SELECT rating FROM drivers WHERE driver_id=?", (driver_id,)
+    ).fetchone()[0]
+    return jsonify({
+        "ride_id": ride_id,
+        "ride_rating": rating,
+        "ride_comment": comment or None,
+        "feedback_tags": tags,
+        "driver_rating": driver_rating
+    })
+
+
 # ---------------------------------------------------------------------------
 # PASSENGER
 # ---------------------------------------------------------------------------
@@ -736,98 +800,97 @@ def cancel_ride(ride_id):
 @app.post("/api/rides/<int:ride_id>/rate")
 @require("passenger")
 def rate_ride(ride_id):
-    """Passenger rates a completed ride and optionally leaves a comment."""
-
-    b = body()
-
-    # Validate rating
-    raw = b.get("rating")
-
-    if isinstance(raw, bool) or not isinstance(raw, (int, str)) or not str(raw).strip().isdigit():
-        return bad("Rating must be a whole number from 1 to 5")
-
-    rating = int(raw)
-
-    if not 1 <= rating <= 5:
-        return bad("Rating must be a whole number from 1 to 5")
-
-    # Validate comment
-    comment = b.get("comment", "")
-
-    if comment is None:
-        comment = ""
-
-    if not isinstance(comment, str):
-        return bad("Comment must be text")
-
-    comment = comment.strip()
-
-    if len(comment) > 1000:
-        return bad("Comment must not exceed 1000 characters")
-
-    # Validate selected ready-made feedback options.
-    raw_tags = b.get("feedback_tags", [])
-    if raw_tags is None:
-        raw_tags = []
-    if not isinstance(raw_tags, list) or any(not isinstance(tag, str) for tag in raw_tags):
-        return bad("Feedback options must be a list of text values")
-    tags = list(dict.fromkeys(tag.strip() for tag in raw_tags if tag.strip()))
-    allowed_tags = IMPROVEMENT_FEEDBACK_OPTIONS if rating <= 3 else POSITIVE_FEEDBACK_OPTIONS
-    if any(tag not in allowed_tags for tag in tags):
-        return bad("One or more feedback options are not valid for this rating")
-
-    # For low ratings, at least one option or a written comment is required.
-    if rating <= 3 and not tags and not comment:
-        return bad("Select at least one feedback option or leave a comment")
-
-    # Check ride ownership and status
-    ride, err = load_owned_ride(ride_id)
-
+    """Create the initial review for a completed ride."""
+    payload, err = validate_review_payload(body())
     if err:
         return err
 
+    ride, err = load_owned_ride(ride_id)
+    if err:
+        return err
     if ride["status"] != "completed":
         return bad("Only a completed ride can be rated", 409)
-
     if ride["ride_rating"] is not None:
         return bad("This ride is already rated", 409)
 
     db = get_db()
-
+    # Use the app's Almaty-local clock, not the server's UTC clock.
+    rated_at = now_local().isoformat(timespec="seconds")
     try:
         db.execute("BEGIN")
-
         cur = db.execute("""
             UPDATE rides
-            SET ride_rating = ?, ride_comment = ?, feedback_tags = ?
-            WHERE ride_id = ? AND ride_rating IS NULL
-        """, (rating, comment or None, json.dumps(tags, ensure_ascii=False) if tags else None, ride_id))
-
+            SET ride_rating=?, ride_comment=?, feedback_tags=?, rated_at=?
+            WHERE ride_id=? AND ride_rating IS NULL
+        """, (
+            payload["rating"], payload["comment"] or None,
+            json.dumps(payload["tags"], ensure_ascii=False) if payload["tags"] else None,
+            rated_at, ride_id
+        ))
         if cur.rowcount != 1:
             db.rollback()
             return bad("This ride is already rated", 409)
-
-        # Recalculate driver's average rating
         recalc_driver_rating(ride["driver_id"], commit=False)
-
         db.commit()
-
     except sqlite3.Error:
         db.rollback()
         return bad("Transaction error, changes rolled back", 500)
 
-    new = db.execute(
-        "SELECT rating FROM drivers WHERE driver_id=?",
-        (ride["driver_id"],)
-    ).fetchone()[0]
+    return review_response(ride_id, payload["rating"], payload["comment"],
+                           payload["tags"], ride["driver_id"])
 
-    return jsonify({
-        "ride_id": ride_id,
-        "ride_rating": rating,
-        "ride_comment": comment or None,
-        "feedback_tags": tags,
-        "driver_rating": new
-    })
+
+@app.put("/api/rides/<int:ride_id>/rate")
+@require("passenger")
+def edit_ride_review(ride_id):
+    """Edit a review repeatedly, but only within one hour of its first submission."""
+    payload, err = validate_review_payload(body())
+    if err:
+        return err
+
+    ride, err = load_owned_ride(ride_id)
+    if err:
+        return err
+    if ride["status"] != "completed":
+        return bad("Only a completed ride can be reviewed", 409)
+    if ride["ride_rating"] is None:
+        return bad("This ride has not been rated yet", 409)
+    if not ride["rated_at"]:
+        return bad("This review cannot be edited because its original submission time is unavailable", 409)
+
+    try:
+        original_time = datetime.fromisoformat(ride["rated_at"])
+    except (TypeError, ValueError):
+        return bad("The original review timestamp is invalid", 409)
+
+    if now_local() >= original_time + timedelta(hours=1):
+        return bad("The one-hour review editing period has expired", 409)
+
+    db = get_db()
+    try:
+        db.execute("BEGIN")
+        cur = db.execute("""
+            UPDATE rides
+            SET ride_rating=?, ride_comment=?, feedback_tags=?
+            WHERE ride_id=? AND ride_rating IS NOT NULL AND rated_at=?
+        """, (
+            payload["rating"], payload["comment"] or None,
+            json.dumps(payload["tags"], ensure_ascii=False) if payload["tags"] else None,
+            ride_id, ride["rated_at"]
+        ))
+        if cur.rowcount != 1:
+            db.rollback()
+            return bad("The review could not be updated", 409)
+        recalc_driver_rating(ride["driver_id"], commit=False)
+        db.commit()
+    except sqlite3.Error:
+        db.rollback()
+        return bad("Transaction error, changes rolled back", 500)
+
+    # Keep rated_at unchanged: editing never extends the original one-hour window.
+    return review_response(ride_id, payload["rating"], payload["comment"],
+                           payload["tags"], ride["driver_id"])
+
 
 # ---------------------------------------------------------------------------
 # DRIVER

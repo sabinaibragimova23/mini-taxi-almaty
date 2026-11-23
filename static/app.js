@@ -598,6 +598,31 @@ function starsView(n) {
   return n ? `<span class="stars" title="${n} of 5">${"★".repeat(n)}<span class="off">${"★".repeat(5 - n)}</span></span>` : "—";
 }
 
+function canEditReview(r) {
+  if (!r.rated_at) return false;
+
+  const submittedAt = new Date(r.rated_at).getTime();
+
+  return Number.isFinite(submittedAt) &&
+    Date.now() < submittedAt + 60 * 60 * 1000;
+}
+
+function parseFeedbackTags(raw) {
+  try {
+    const tags = Array.isArray(raw) ? raw : JSON.parse(raw || "[]");
+    return Array.isArray(tags) ? tags : [];
+  } catch {
+    return [];
+  }
+}
+
+function editReviewButton(r) {
+  return canEditReview(r)
+    ? ` <button type="button" class="btn ghost small"
+        data-act="edit-review" data-id="${r.ride_id}">Edit review</button>`
+    : "";
+}
+
 const POSITIVE_FEEDBACK_OPTIONS = [
   "Polite driver", "Clean car", "Safe driving",
   "Arrived on time", "Comfortable ride", "Friendly communication"
@@ -649,7 +674,9 @@ async function loadMyRides() {
       <td><b>${money(r.price)}</b></td>
       <td>${badge(r.status)}</td>
       <td>${r.last_payment_status ? badge(r.last_payment_status) + ` <span class="muted">${LABEL_TXT[r.last_payment_method]}</span>` : "—"}</td>
-      <td>${r.status !== "completed" ? "—" : r.ride_rating ? starsView(r.ride_rating) : rateButtons(r.ride_id)}</td>
+      <td>${r.status !== "completed" ? "—" : r.ride_rating
+        ? starsView(r.ride_rating) + editReviewButton(r)
+        : rateButtons(r.ride_id)}</td>
       <td class="wrap">${feedbackTagsView(r.feedback_tags)}${r.ride_comment ? `<div>${esc(r.ride_comment)}</div>` : (!r.feedback_tags ? "—" : "")}</td>
     </tr>`).join("")
     || '<tr><td colspan="10" class="muted">No trips yet</td></tr>'}</tbody>`;
@@ -882,42 +909,68 @@ document.addEventListener("click", async e => {
   const id = b.dataset.id;
   const action = b.dataset.act;
 
-  // Open the feedback modal after a passenger selects a rating.
-  if (action === "rate") {
-    const rating = Number(b.dataset.v);
-    const required = rating <= 3;
-    const options = required ? IMPROVEMENT_FEEDBACK_OPTIONS : POSITIVE_FEEDBACK_OPTIONS;
-    const title = required ? "How can we improve?" : "How was your ride?";
-    const subtitle = required
-      ? "Choose what went wrong, or tell us more below."
-      : "Select what you enjoyed. You can also leave a comment.";
-    document.querySelector(".rating-feedback-backdrop")?.remove();
-    document.body.insertAdjacentHTML("beforeend", `
-      <div class="rating-feedback-backdrop" role="presentation">
-        <section class="rating-feedback-modal" role="dialog" aria-modal="true" aria-label="Ride feedback">
-          <button type="button" class="rating-feedback-close" data-act="cancel-rating" aria-label="Close">×</button>
-          <h3>${title}</h3>
-          <p class="rating-feedback-subtitle">${subtitle}</p>
-          <div class="rating-feedback-stars">${"★".repeat(rating)}<span>${"★".repeat(5-rating)}</span></div>
-          <div class="rating-comment-form">
-            <strong>${required ? "What could be improved?" : "What did you like?"}</strong>
-            <div class="feedback-options">
-              ${options.map(option => `<label class="feedback-option"><input type="checkbox" value="${option}"><span>${option}</span></label>`).join("")}
-            </div>
-            <label class="rating-comment-label">Additional comment <span class="optional-label">(optional)</span></label>
-            <textarea class="rating-comment-input" maxlength="1000" rows="3"
-              placeholder="${required ? "Select an option or explain your experience..." : "Share your experience..."}"></textarea>
-            <div class="rating-comment-actions">
-              <button type="button" class="btn primary" data-act="submit-rating" data-id="${id}" data-v="${rating}">Submit feedback</button>
-              <button type="button" class="btn ghost" data-act="cancel-rating">Cancel</button>
-            </div>
-          </div>
-        </section>
-      </div>
-    `);
-    document.querySelector(".rating-feedback-modal textarea")?.focus();
-    return;
+  // Open feedback modal for a new review or an edit.
+if (action === "rate" || action === "edit-review") {
+  const isEdit = action === "edit-review";
+  let rating = Number(b.dataset.v || 0);
+  let comment = "";
+  let selectedTags = [];
+
+  if (isEdit) {
+    const rides = await api("/api/my/rides");
+    const ride = rides.find(r => String(r.ride_id) === String(id));
+
+    if (!ride || !ride.ride_rating) {
+      toast("Review not found. Refresh the page.", true);
+      return;
+    }
+
+    if (!canEditReview(ride)) {
+      toast("The one-hour editing period has expired.", true);
+      LOADERS[state.view]?.();
+      return;
+    }
+
+    rating = Number(ride.ride_rating);
+    comment = ride.ride_comment || "";
+    selectedTags = parseFeedbackTags(ride.feedback_tags);
   }
+
+  const required = rating <= 3;
+  const options = required ? IMPROVEMENT_FEEDBACK_OPTIONS : POSITIVE_FEEDBACK_OPTIONS;
+  const title = isEdit ? "Edit your review" : (required ? "How can we improve?" : "How was your ride?");
+  const subtitle = required
+    ? "Choose what went wrong, or tell us more below."
+    : "Select what you enjoyed. You can also leave a comment.";
+
+  document.querySelector(".rating-feedback-backdrop")?.remove();
+  document.body.insertAdjacentHTML("beforeend", `
+    <div class="rating-feedback-backdrop" role="presentation">
+      <section class="rating-feedback-modal" role="dialog" aria-modal="true" aria-label="Ride feedback">
+        <button type="button" class="rating-feedback-close" data-act="cancel-rating" aria-label="Close">×</button>
+        <h3>${title}</h3>
+        <p class="rating-feedback-subtitle">${subtitle}</p>
+        <div class="rating-feedback-stars">${"★".repeat(rating)}<span>${"★".repeat(5-rating)}</span></div>
+        <div class="rating-comment-form">
+          <strong>${required ? "What could be improved?" : "What did you like?"}</strong>
+          <div class="feedback-options">
+            ${options.map(option => `<label class="feedback-option"><input type="checkbox" value="${esc(option)}" ${selectedTags.includes(option) ? "checked" : ""}><span>${esc(option)}</span></label>`).join("")}
+          </div>
+          <label class="rating-comment-label">Additional comment <span class="optional-label">(optional)</span></label>
+          <textarea class="rating-comment-input" maxlength="1000" rows="3"
+            placeholder="${required ? "Select an option or explain your experience..." : "Share your experience..."}">${esc(comment)}</textarea>
+          <div class="rating-comment-actions">
+            <button type="button" class="btn primary" data-act="submit-rating" data-id="${id}" data-v="${rating}" data-mode="${isEdit ? "edit" : "new"}">${isEdit ? "Save changes" : "Submit feedback"}</button>
+            <button type="button" class="btn ghost" data-act="cancel-rating">Cancel</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  `);
+
+  document.querySelector(".rating-feedback-modal textarea")?.focus();
+  return;
+}
 
   // Close feedback modal
   if (action === "cancel-rating") {
@@ -983,11 +1036,14 @@ document.addEventListener("click", async e => {
         b.disabled = false;
         return;
       }
+      const isEdit = b.dataset.mode === "edit";
       const r = await api(`/api/rides/${id}/rate`, {
-        method: "POST",
+        method: isEdit ? "PUT" : "POST",
         body: { rating: Number(b.dataset.v), comment, feedback_tags }
       });
-      toast(`Thanks! Rated ${r.ride_rating}/5 · driver rating now ${Number(r.driver_rating).toFixed(1)}`);
+      toast(isEdit
+        ? `Review updated. Driver rating now ${Number(r.driver_rating).toFixed(1)}`
+        : `Thanks! Rated ${r.ride_rating}/5 · driver rating now ${Number(r.driver_rating).toFixed(1)}`);
 
     } else if (action === "pay") {
       const r = await api(`/api/rides/${id}/pay`, {
