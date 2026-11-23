@@ -21,7 +21,7 @@ import re
 import sqlite3
 import time
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from flask import Flask, g, jsonify, request, send_from_directory
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -193,7 +193,7 @@ def quote(pickup_name, dropoff_name, when=None, rules=None, conditions=None):
         raise ValueError("Choose pickup and drop-off points from the list")
     if a is b:
         raise ValueError("Pickup and drop-off are the same place")
-    when = when or datetime.now()
+    when = when or now_local()
     rules = rules or load_fare_rules(get_db())
     on = lambda k: k in rules and rules[k]["active"]
 
@@ -257,6 +257,15 @@ def quote(pickup_name, dropoff_name, when=None, rules=None, conditions=None):
         "extras": applied,
     }
 
+
+
+ALMATY_TZ = timezone(timedelta(hours=5))   # Kazakhstan is UTC+5 all year
+
+
+def now_local():
+    """Current time in Almaty. The server (Render) runs in UTC, so a plain datetime.now() is 5 hours behind:
+    rush hour and night fare would start at the wrong time."""
+    return datetime.now(ALMATY_TZ).replace(tzinfo=None)
 
 
 def get_db():
@@ -325,7 +334,7 @@ def migrate_shifts(con):
     If it is still empty, put every driver online once, so booking keeps working."""
     if con.execute("SELECT COUNT(*) FROM driver_shifts").fetchone()[0] == 0:
         con.execute("""INSERT INTO driver_shifts(driver_id, started_at)
-                       SELECT driver_id, ? FROM drivers""", (datetime.now().strftime("%Y-%m-%d %H:%M"),))
+                       SELECT driver_id, ? FROM drivers""", (now_local().strftime("%Y-%m-%d %H:%M"),))
 
 
 def seed(con):
@@ -381,7 +390,7 @@ def seed(con):
     names = [p["name"] for p in PLACES]
     weights = [6 if p["id"] in ("airport", "mega", "esentai", "dostyk", "kbtu", "satbayev", "kaznu", "almaty2")
                else 2 for p in PLACES]
-    now = datetime.now()
+    now = now_local()
     start = now - timedelta(days=58)
     for _ in range(64):
         pickup = rnd.choices(names, weights)[0]
@@ -504,7 +513,7 @@ def body():
 
 
 def now_str():
-    return datetime.now().strftime("%Y-%m-%d %H:%M")
+    return now_local().strftime("%Y-%m-%d %H:%M")
 
 
 RIDE_SELECT = """
@@ -879,7 +888,7 @@ def driver_earnings():
         WHERE p.payment_status='paid' AND r.driver_id=?
         GROUP BY month ORDER BY month DESC""", (did,)))
     # place among all drivers this month (no other drivers' names or money shown)
-    month = datetime.now().strftime("%Y-%m")
+    month = now_local().strftime("%Y-%m")
     ranking = [r[0] for r in db.execute("""
         SELECT r.driver_id FROM payments p JOIN rides r ON r.ride_id=p.ride_id
         WHERE p.payment_status='paid' AND strftime('%Y-%m', p.paid_at)=?
@@ -942,7 +951,7 @@ def retry_payment(ride_id):
 def api_stats():
     db = get_db()
     one = lambda sql: db.execute(sql).fetchone()[0]
-    month = datetime.now().strftime("%Y-%m")
+    month = now_local().strftime("%Y-%m")
     return jsonify({
         "passengers": one("SELECT COUNT(*) FROM passengers"),
         "drivers": one("SELECT COUNT(*) FROM drivers"),
@@ -1117,7 +1126,7 @@ def report_earnings():
     db = get_db()
     months = [r[0] for r in db.execute(
         "SELECT DISTINCT strftime('%Y-%m', paid_at) m FROM payments WHERE payment_status='paid' ORDER BY m DESC")]
-    month = request.args.get("month") or (months[0] if months else datetime.now().strftime("%Y-%m"))
+    month = request.args.get("month") or (months[0] if months else now_local().strftime("%Y-%m"))
     data = rows(db.execute(EARNINGS_SQL, {"month": month}))
     places = rows(db.execute("""SELECT pickup_address AS place, COUNT(*) AS rides FROM rides
                                 GROUP BY pickup_address ORDER BY rides DESC LIMIT 6"""))
@@ -1152,7 +1161,7 @@ ORDER BY hours DESC;"""
 @require("admin")
 def report_hours():
     """Hours online per driver over the last 7 days (an open shift counts until now)."""
-    since = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M")
+    since = (now_local() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M")
     data = rows(get_db().execute(HOURS_SQL, {"now": now_str(), "since": since}))
     return jsonify({"since": since, "sql": HOURS_SQL, "rows": data})
 

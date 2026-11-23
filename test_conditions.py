@@ -155,3 +155,11 @@ def test_weather_service_down_does_not_break_prices(client, monkeypatch):
     c = client.get("/api/conditions").get_json()
     assert c["weather"] == "clear" and c["weather_source"] == "unavailable"
     assert quote(client)["price"] > 0
+
+
+# TEST 13: the server clock is Almaty time (UTC+5), not the time zone of the hosting server
+def test_now_local_is_almaty_time():
+    from datetime import datetime, timezone, timedelta
+    utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    diff = taxi_app.now_local() - utc
+    assert timedelta(hours=4, minutes=59) <= diff <= timedelta(hours=5, minutes=1)
