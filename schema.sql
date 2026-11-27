@@ -91,3 +91,14 @@ CREATE TABLE IF NOT EXISTS conditions (
     value      TEXT NOT NULL,
     updated_at TEXT
 );
+
+-- Saved places: a passenger's favourite addresses, e.g. "Home" or "University" (migration 008)
+CREATE TABLE IF NOT EXISTS saved_places (
+    place_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    passenger_id INTEGER NOT NULL REFERENCES passengers(passenger_id) ON DELETE CASCADE,
+    label        TEXT    NOT NULL CHECK (length(trim(label)) BETWEEN 1 AND 30),
+    address      TEXT    NOT NULL,                     -- one of the Almaty places on the map
+    icon         TEXT    NOT NULL DEFAULT 'pin' CHECK (icon IN ('home', 'work', 'study', 'heart', 'pin')),
+    created_at   TEXT    NOT NULL,
+    UNIQUE (passenger_id, label COLLATE NOCASE)        -- no two "Home" places for one passenger
+);

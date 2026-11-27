@@ -5,6 +5,7 @@ erDiagram
     DRIVERS ||--o{ DRIVER_SHIFTS : "works"
     CARS ||--o{ RIDES : "is used in"
     RIDES ||--o{ PAYMENTS : "is paid by"
+    PASSENGERS ||--o{ SAVED_PLACES : "saves"
 
     PASSENGERS {
         INTEGER passenger_id PK
@@ -42,6 +43,8 @@ erDiagram
         INTEGER price "KZT, CHECK > 0"
         INTEGER ride_rating "CHECK 1 to 5"
         TEXT ride_comment "max 1000 chars"
+        TEXT feedback_tags
+        TEXT rated_at
     }
     PAYMENTS {
         INTEGER payment_id PK
@@ -65,4 +68,17 @@ erDiagram
         TEXT applies_to "NOT NULL"
         INTEGER active "0 or 1"
         TEXT updated_at
+    }
+    CONDITIONS {
+        TEXT key PK
+        TEXT value "NOT NULL"
+        TEXT updated_at
+    }
+    SAVED_PLACES {
+        INTEGER place_id PK
+        INTEGER passenger_id FK "to PASSENGERS"
+        TEXT label "UNIQUE per passenger"
+        TEXT address "NOT NULL"
+        TEXT icon "home, work, study, heart, pin"
+        TEXT created_at "NOT NULL"
     }

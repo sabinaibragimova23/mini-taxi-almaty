@@ -39,6 +39,8 @@ Table rides {
   price integer [not null, note: 'KZT, CHECK price > 0']
   ride_rating integer [note: 'CHECK 1 to 5, empty until rated']
   ride_comment text [note: 'up to 1000 characters']
+  feedback_tags text [note: 'ready-made feedback options']
+  rated_at text [note: 'when the rating was given (editable for 1 hour)']
 }
 
 Table payments {
@@ -70,4 +72,24 @@ Table fare_rules {
   active integer [not null, default: 1, note: '0 or 1']
   updated_at text
   Note: 'No foreign keys: a ride stores the final price in rides.price at booking, so changing a rule never changes old rides.'
+}
+
+Table conditions {
+  key text [pk, note: 'traffic, accident_district, weather_mode']
+  value text [not null]
+  updated_at text
+  Note: 'Live conditions set by the admin or taken from the weather service. No foreign keys.'
+}
+
+Table saved_places {
+  place_id integer [pk, increment]
+  passenger_id integer [not null, ref: > passengers.passenger_id, note: 'ON DELETE CASCADE']
+  label text [not null, note: 'CHECK 1 to 30 characters']
+  address text [not null, note: 'one of the Almaty places on the map']
+  icon text [not null, default: 'pin', note: 'home / work / study / heart / pin']
+  created_at text [not null]
+
+  indexes {
+    (passenger_id, label) [unique, note: 'case-insensitive: no two "Home" places for one passenger']
+  }
 }

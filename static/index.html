@@ -93,6 +93,7 @@
         <h1 id="greeting">Where to?</h1>
         <p class="muted">Choose on the map or from the list.</p>
         <div class="cond-bar" id="condBook"></div>
+        <div class="saved-chips" id="savedChips" aria-label="Saved places"></div>
         <div class="route">
           <div class="route-line" aria-hidden="true"><i class="dot a"></i><i class="bar"></i><i class="dot b"></i></div>
           <div class="route-fields">
@@ -190,6 +191,7 @@
       <button data-t="payments">PAYMENTS</button>
       <button data-t="driver_shifts">DRIVER_SHIFTS</button>
       <button data-t="fare_rules">FARE_RULES</button>
+      <button data-t="saved_places">SAVED_PLACES</button>
     </div>
     <div class="db-grid">
       <div class="card table-wrap"><table class="data mono" id="dbTable"></table></div>
@@ -249,11 +251,60 @@
   </section>
 </main>
 
-<footer class="foot">
-  <span>MiniTaxi Almaty, student project (Task 9)</span>
-  <button class="link" id="resetBtn" hidden>Reset demo data</button>
+<footer class="site-foot">
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <b>MiniTaxi</b><span>Almaty</span>
+      <p>A taxi around Almaty: book on the map, see the full price before the ride, pay by cash or card.</p>
+    </div>
+    <nav class="foot-col" aria-label="Service">
+      <h4>Service</h4>
+      <button type="button" class="foot-link" data-foot="book">Book a taxi</button>
+      <button type="button" class="foot-link" data-foot="prices">Prices and extra charges</button>
+      <button type="button" class="foot-link" data-info="how">How it works</button>
+    </nav>
+    <nav class="foot-col" aria-label="Company">
+      <h4>Company</h4>
+      <button type="button" class="foot-link" data-info="about">About us</button>
+      <button type="button" class="foot-link" data-info="drivers">For drivers</button>
+      <button type="button" class="foot-link" data-info="contact">Contact</button>
+    </nav>
+    <nav class="foot-col" aria-label="Legal">
+      <h4>Legal</h4>
+      <button type="button" class="foot-link" data-info="terms">Terms of use</button>
+      <button type="button" class="foot-link" data-info="privacy">Privacy policy</button>
+    </nav>
+  </div>
+  <div class="foot-bottom">
+    <span>© 2026 MiniTaxi Almaty · Prices in tenge · Almaty time (UTC+5)</span>
+    <button class="link" id="resetBtn" hidden>Reset demo data</button>
+  </div>
 </footer>
 
+<dialog id="infoDialog" class="info-dialog" aria-labelledby="infoTitle">
+  <button type="button" class="dialog-close" id="infoDialogClose" aria-label="Close">×</button>
+  <div id="infoBody"></div>
+</dialog>
+
+<dialog id="savedDialog" class="saved-dialog" aria-labelledby="savedDialogTitle">
+  <button type="button" class="dialog-close" id="savedDialogClose" aria-label="Close">×</button>
+  <h2 id="savedDialogTitle">My saved places</h2>
+  <p class="muted" id="savedNote">Choose a pickup point to see the price and time to each place.</p>
+  <div id="savedList"></div>
+</dialog>
+<dialog id="placeDialog" class="place-dialog" aria-labelledby="placeDialogTitle">
+  <button type="button" class="dialog-close" id="placeDialogClose" aria-label="Close">×</button>
+  <form id="savedForm" autocomplete="off">
+    <h2 id="placeDialogTitle">Add a place</h2>
+    <p class="muted">Save it once, then book it in one click.</p>
+    <label class="field"><span>Name</span><input type="text" name="label" maxlength="30" placeholder="For example: Mom, Work, Dance class" required></label>
+    <label class="field"><span>Address</span><select name="address" id="savedAddress" required></select></label>
+    <div class="field"><span>Icon</span>
+      <div class="icon-pick" id="iconPick"></div>
+    </div>
+    <div class="actions"><button type="button" class="btn ghost" id="placeCancel">Cancel</button><button class="btn primary">Save place</button></div>
+  </form>
+</dialog>
 <dialog id="priceDialog" class="price-dialog" aria-labelledby="priceDialogTitle">
   <button type="button" class="dialog-close" id="priceDialogClose" aria-label="Close">×</button>
   <div id="pricePanel"></div>

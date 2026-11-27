@@ -60,6 +60,9 @@ An existing `taxi.db` is upgraded automatically on start (see `migrations/`).
 | GET | /api/driver/rides, /api/driver/earnings | driver | own rides, own earnings |
 | POST | /api/driver/online, /api/driver/offline | driver | start / end a shift |
 | GET | /api/fares | everyone | active prices for the price panel |
+| GET / POST | /api/my/places | passenger | own saved places (with ?from=: price and time to each, with traffic) / save a place |
+| DELETE | /api/my/places/:id | passenger | delete own saved place |
+| GET | /api/saved_places | admin | all saved places |
 | GET | /api/conditions | everyone | traffic, accident district and weather right now |
 | POST | /api/conditions | admin | set `{traffic, accident_district, weather_mode}` |
 | GET / POST | /api/fare_rules, /api/fare_rules/:key | admin | all prices / change a price or switch it on/off |
@@ -109,6 +112,8 @@ so a later price change does not touch it.
 
 - A driver has only one active ride at a time (status = requested).
 - A passenger has only one active ride at a time.
+- A passenger can save up to 10 places; two places with the same name are refused by the database (UNIQUE, case-insensitive).
+- Travel time depends on traffic, an accident on the route and the weather (moderate traffic ~21 km/h, heavy ~16 km/h, free roads ~28 km/h).
 - Only drivers who are online (an open shift in DRIVER_SHIFTS) get new orders. A driver cannot go offline during a ride.
 - If all drivers are busy, the ride is not created (error 409).
 - Only an active ride can be completed or cancelled.

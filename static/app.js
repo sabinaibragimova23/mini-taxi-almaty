@@ -285,7 +285,7 @@ setInterval(async () => {
   const before = JSON.stringify(state.cond);
   try { await loadConditions(); } catch { return; }
   if (JSON.stringify(state.cond) === before) return;
-  if (state.view === "home") drawHomeMap(); else syncRoute();
+  if (state.view === "home") drawHomeMap(); else { syncRoute(); renderSavedPlaces().catch(() => {}); }
 }, 60000);
 
 /* =========================== PASSENGER: BOOK =========================== */
@@ -296,8 +296,117 @@ function placeOptions(placeholder) {
     `<optgroup label="${d} District">${ps.map(p => `<option>${esc(p.name)}</option>`).join("")}</optgroup>`).join("");
 }
 
+/* =========================== PASSENGER: SAVED PLACES =========================== */
+const SAVED_ICON = {   // small line icons, no emoji
+  home: '<path d="M3 11 12 4l9 7v9h-6v-6H9v6H3z"/>',
+  work: '<path d="M4 8h16v11H4zM9 8V5h6v3"/>',
+  study: '<path d="M2 9l10-5 10 5-10 5zM6 11v5c3 2 9 2 12 0v-5"/>',
+  heart: '<path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/>',
+  pin: '<path d="M12 21s-6-6.2-6-11a6 6 0 0 1 12 0c0 4.8-6 11-6 11z"/><circle cx="12" cy="10" r="2"/>',
+};
+const savedIcon = k => `<svg class="saved-ico" viewBox="0 0 24 24" aria-hidden="true">${SAVED_ICON[k] || SAVED_ICON.pin}</svg>`;
+const ICON_NAMES = { home: "Home", work: "Work", study: "Study", heart: "Favourite", pin: "Place" };
+const SUGGESTED_PLACES = [["Home", "home"], ["Work", "work"], ["University", "study"], ["Gym", "heart"]];
+
+/* "+ Home", "+ Work"... only for names the passenger has not saved yet, plus "+ Other" */
+function suggestionButtons(places) {
+  const have = new Set(places.map(p => p.label.toLowerCase()));
+  return SUGGESTED_PLACES.filter(([n]) => !have.has(n.toLowerCase()))
+    .map(([n, icon]) => `<button type="button" class="suggest-btn" data-add-place="${n}" data-add-icon="${icon}">${savedIcon(icon)}<span>+ ${n}</span></button>`).join("")
+    + `<button type="button" class="suggest-btn other" data-add-place="" data-add-icon="pin">${savedIcon("pin")}<span>+ Other place</span></button>`;
+}
+
+function openPlaceDialog(label, icon) {
+  const f = $("#savedForm");
+  f.reset();
+  f.label.value = label || "";
+  $("#iconPick").innerHTML = Object.entries(ICON_NAMES).map(([k, name]) =>
+    `<label class="icon-opt"><input type="radio" name="icon" value="${k}" ${k === (icon || "pin") ? "checked" : ""}>${savedIcon(k)}<span>${name}</span></label>`).join("");
+  $("#placeDialogTitle").textContent = label ? `Add ${label}` : "Add a place";
+  $("#placeDialog").showModal();
+  (label ? f.address : f.label).focus();
+}
+
+async function renderSavedPlaces() {
+  if (!state.me || state.me.role !== "passenger") return;
+  state.savedFrom = state.pickup;
+  const r = await api("/api/my/places" + (state.pickup ? "?from=" + encodeURIComponent(state.pickup) : ""));
+  state.saved = r.places;
+  const trafficWord = { free: "free roads", moderate: "moderate traffic", heavy: "heavy traffic" }[r.traffic] || "";
+  // one line in the booking form: the saved places as buttons, or an invitation to save them
+  $("#savedChips").innerHTML = r.places.length
+    ? r.places.map(p =>
+        `<button type="button" class="saved-chip ${p.address === state.dropoff ? "on" : ""}" data-saved-to="${esc(p.address)}" title="Go to ${esc(p.address)}">${savedIcon(p.icon)}${esc(p.label)}</button>`).join("")
+      + `<button type="button" class="link saved-link" data-open-saved>Manage</button>`
+    : `<button type="button" class="link saved-link invite" data-open-saved>${savedIcon("heart")}Save places you go often</button>`;
+  $("#savedNote").textContent = r.from
+    ? `Price and time from ${r.from} right now${trafficWord ? ", " + trafficWord : ""}. Updates with traffic and weather.`
+    : "Choose a pickup point to see the price and time to each place.";
+  $("#savedList").innerHTML = r.places.length ? `<div class="saved-rows">${r.places.map(p => {
+    const e = p.estimate;
+    const est = !r.from ? `<span class="muted">—</span>`
+      : !e ? `<span class="muted">You are here</span>`
+      : `<b>${money(e.price)}</b><span>~${e.minutes} min</span>${e.traffic_delay_min > 0 ? `<span class="delay">+${e.traffic_delay_min} min traffic</span>` : ""}`;
+    return `<div class="saved-row">
+      <div class="saved-name">${savedIcon(p.icon)}<div><b>${esc(p.label)}</b><div class="muted">${esc(p.address)}</div></div></div>
+      <div class="saved-est">${est}</div>
+      <div class="saved-actions">
+        <button type="button" class="btn ghost small" data-saved-from="${esc(p.address)}">From here</button>
+        <button type="button" class="btn blue small" data-saved-to="${esc(p.address)}">Go here</button>
+        <button type="button" class="btn danger small" data-saved-del="${p.place_id}" title="Delete" aria-label="Delete ${esc(p.label)}">×</button>
+      </div></div>`;
+  }).join("")}</div>
+    <div class="suggest-row"><span class="muted">Add another place:</span>${suggestionButtons(r.places)}</div>`
+  : `<div class="saved-empty">
+      <h3>Where do you go most often?</h3>
+      <p class="muted">Save places like home or work, and next time book a taxi there in one click.</p>
+      <div class="suggest-row">${suggestionButtons([])}</div>
+    </div>`;
+}
+
+document.addEventListener("click", async e => {
+  const to = e.target.closest("[data-saved-to]"), from = e.target.closest("[data-saved-from]"), del = e.target.closest("[data-saved-del]");
+  const add = e.target.closest("[data-add-place]"), open = e.target.closest("[data-open-saved]");
+  if (open) {
+    $("#savedDialog").showModal();
+  } else if (add) {
+    openPlaceDialog(add.dataset.addPlace, add.dataset.addIcon);
+  } else if (to) {
+    if (to.dataset.savedTo === state.pickup) return toast("That is your pickup point", true);
+    state.dropoff = to.dataset.savedTo;
+    if ($("#savedDialog").open) $("#savedDialog").close();
+    syncRoute();
+    $("#orderForm").scrollIntoView({ behavior: "smooth", block: "start" });
+  } else if (from) {
+    state.pickup = from.dataset.savedFrom;
+    if (state.dropoff === state.pickup) state.dropoff = "";
+    if ($("#savedDialog").open) $("#savedDialog").close();
+    syncRoute();
+    $("#orderForm").scrollIntoView({ behavior: "smooth", block: "start" });
+  } else if (del) {
+    try { await api(`/api/my/places/${del.dataset.savedDel}`, { method: "DELETE" }); toast("Place deleted"); renderSavedPlaces(); }
+    catch (err) { toast(err.message, true); }
+  }
+});
+$("#placeDialogClose").addEventListener("click", () => $("#placeDialog").close());
+$("#savedDialogClose").addEventListener("click", () => $("#savedDialog").close());
+$("#savedDialog").addEventListener("click", e => { if (e.target.id === "savedDialog") e.target.close(); });
+$("#placeCancel").addEventListener("click", () => $("#placeDialog").close());
+$("#placeDialog").addEventListener("click", e => { if (e.target.id === "placeDialog") e.target.close(); });
+$("#savedForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    const p = await api("/api/my/places", { method: "POST", body: Object.fromEntries(new FormData(e.target)) });
+    $("#placeDialog").close();
+    toast(`"${p.label}" saved. Tap it to book a ride there.`);
+    renderSavedPlaces();
+  } catch (err) { toast(err.message, true); }
+});
+
 async function loadBook() {
   await ensurePlaces();
+  if (!$("#savedAddress").options.length) $("#savedAddress").innerHTML = placeOptions("Choose an address");
+  state.savedFrom = undefined;   // load this passenger's saved places again
   await loadConditions().catch(() => {});
   $("#greeting").textContent = `Where to, ${state.me.name.split(" ")[0]}?`;
   syncRoute();
@@ -431,6 +540,8 @@ showPenaltyModalIfNeeded(progress, r.ride_id);
 
 
 async function syncRoute() {
+  if (state.view === "book" && state.me?.role === "passenger" && state.savedFrom !== state.pickup) renderSavedPlaces().catch(() => {});
+  else if (state.saved) $$(".saved-chip").forEach(c => c.classList.toggle("on", c.dataset.savedTo === state.dropoff));
   $("#pickupSelect").value = state.pickup;
   $("#dropoffSelect").value = state.dropoff;
   $("#mapTip").textContent = !state.pickup
@@ -478,7 +589,7 @@ async function syncRoute() {
 
     box.innerHTML = `<div class="quote-wrap">
       <div class="quote-body">
-        <div class="quote-meta">${q.distance_km} km · ~${q.minutes} min ride</div>
+        <div class="quote-meta">${q.distance_km} km · ~${q.minutes} min ride${q.traffic_delay_min > 0 ? ` <span class="delay">+${q.traffic_delay_min} min traffic</span>` : ""}</div>
         <div class="quote-price">${money(finalPrice)}</div>
       </div>
       <ul class="price-lines">${q.lines.map(l => `<li class="${l.rule && !["base", "per_km"].includes(l.rule) ? "extra" : ""}">
@@ -1078,6 +1189,7 @@ const TABLES = {
   cars: { desc: "Cars used for rides", cols: ["car_id", "driver_id", "plate_number", "model", "color"], pk: "car_id", fk: { driver_id: "DRIVERS" }, why: "A driver can change cars or have two, so car data is kept separately from the driver (see driver 3)." },
   rides: { desc: "One row for every ride", cols: ["ride_id", "passenger_id", "driver_id", "car_id", "pickup_address", "dropoff_address", "start_time", "status", "price", "ride_rating", "ride_comment", "feedback_tags"], pk: "ride_id", fk: { passenger_id: "PASSENGERS", driver_id: "DRIVERS", car_id: "CARS" }, why: "This is the main action. It connects a passenger, a driver and a car." },
   fare_rules: { desc: "All prices and extra charges", cols: ["rule_key", "name", "kind", "amount", "applies_to", "active", "updated_at"], pk: "rule_key", fk: {}, why: "Prices are data, not code: the admin changes them in the Prices panel. A ride keeps the price saved at booking." },
+  saved_places: { desc: "Passengers' favourite addresses", cols: ["place_id", "passenger_id", "label", "address", "icon", "created_at"], pk: "place_id", fk: { passenger_id: "PASSENGERS" }, why: "One passenger has many saved places (1:M). The same name twice for one passenger is refused by a UNIQUE rule." },
   driver_shifts: { desc: "When each driver was online", cols: ["shift_id", "driver_id", "started_at", "ended_at"], pk: "shift_id", fk: { driver_id: "DRIVERS" }, why: "A driver is online while their shift has no ended_at. Only online drivers get orders." },
   payments: { desc: "Payment for each ride", cols: ["payment_id", "ride_id", "amount", "method", "payment_status", "paid_at"], pk: "payment_id", fk: { ride_id: "RIDES" }, why: "Payment can fail or happen later, so it has its own record." },
 };
@@ -1191,6 +1303,7 @@ const MATRIX = [
   ["DRIVERS", "Name, phone, rating of own assigned driver", "Own profile", "Read all, add"],
   ["CARS", "Model, color, plate of own assigned car", "Own cars", "Read all, add"],
   ["RIDES", "Own rides: create, cancel while active", "Own assigned rides: complete", "Read all, cancel"],
+  ["SAVED_PLACES", "Own places: add, delete, see price and time", "No access", "Read all"],
   ["FARE_RULES", "Read active prices", "Read active prices", "Read all, change prices, switch extras on/off"],
   ["DRIVER_SHIFTS", "No access", "Own shifts: go online / offline", "Read all, hours report"],
   ["PAYMENTS", "Own rides: pay again by card", "Own rides: create payment (cash/card)", "Read all, reports"],
@@ -1209,6 +1322,60 @@ async function renderAccess() {
 }
 
 /* =========================== START =========================== */
+/* =========================== FOOTER =========================== */
+const INFO_PAGES = {
+  how: ["How it works", `
+    <ol>
+      <li>Choose where you are and where you go: on the map, from the list or from your saved places.</li>
+      <li>See the full price before you book: every extra charge is listed.</li>
+      <li>The online driver with the best rating gets your order at once.</li>
+      <li>Pay by cash or card at the end of the ride, then rate the driver.</li>
+    </ol>`],
+  about: ["About us", `
+    <p>MiniTaxi is a small taxi service for Almaty. We wanted a taxi where the price is clear before the ride, drivers work when they choose, and every ride is stored safely.</p>
+    <p>The service covers 20 places across the city, from Almaty Airport to Medeu and Shymbulak.</p>`],
+  drivers: ["For drivers", `
+    <ul>
+      <li>Press <b>Go online</b> when you are ready to work and <b>Go offline</b> when you finish. Orders only go to online drivers.</li>
+      <li>You cannot go offline in the middle of a ride.</li>
+      <li>Your earnings by month and your hours online are in the <b>Earnings</b> tab. The top driver of the month gets a bonus.</li>
+    </ul>`],
+  contact: ["Contact", `
+    <p>A question or a problem with a ride? Write to the team on our GitHub page: open the <b>Issues</b> tab and describe what happened. Add the ride number if you have it.</p>
+    <p><a href="https://github.com/sabinaibragimova23/mini-taxi-almaty/issues" target="_blank" rel="noopener">github.com/sabinaibragimova23/mini-taxi-almaty</a></p>`],
+  terms: ["Terms of use", `
+    <ul>
+      <li><b>Price.</b> The price is fixed when you book. Later changes of prices do not change your ride.</li>
+      <li><b>Extra charges</b> (mountains, airport, night, rush hour, traffic, accidents, weather) are shown before you book. Together they never raise the price more than ×2.</li>
+      <li><b>Late cancellation.</b> If the driver has already covered 80% of the way, cancelling costs 20% of the price for rides over 1,000 ₸, or 200 ₸ for cheaper rides.</li>
+      <li><b>Payment</b> is by cash or card at the end of the ride. If a card is declined, the ride must be paid again.</li>
+      <li>One passenger can have one active ride at a time.</li>
+    </ul>`],
+  privacy: ["Privacy policy", `
+    <p><b>What we store:</b> your name, phone and email; your rides, payments and ratings; the places you save.</p>
+    <p><b>How we protect it:</b> passwords are stored only as a hash, never as text. A driver sees your phone only during your ride. Other passengers never see your data.</p>
+    <p><b>Who can see what:</b> you see your own rides and places; drivers see only rides given to them; the admin sees all data to run the service.</p>
+    <p>We use your data only to run your rides.</p>`],
+};
+function openInfo(key) {
+  const [title, html] = INFO_PAGES[key];
+  $("#infoBody").innerHTML = `<h2 id="infoTitle">${title}</h2><div class="info-text">${html}</div>`;
+  $("#infoDialog").showModal();
+}
+document.addEventListener("click", async e => {
+  const info = e.target.closest("[data-info]"), foot = e.target.closest("[data-foot]");
+  if (info) openInfo(info.dataset.info);
+  if (foot && foot.dataset.foot === "prices") {
+    try { await renderPricePanel(); $("#priceDialog").showModal(); } catch (err) { toast(err.message, true); }
+  }
+  if (foot && foot.dataset.foot === "book") {
+    if (state.me?.role === "passenger") { show("book"); window.scrollTo({ top: 0, behavior: "smooth" }); }
+    else { state.loginRole = "passenger"; show("login"); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  }
+});
+$("#infoDialogClose").addEventListener("click", () => $("#infoDialog").close());
+$("#infoDialog").addEventListener("click", e => { if (e.target.id === "infoDialog") e.target.close(); });
+
 $("#resetBtn").addEventListener("click", async () => {
   if (!confirm("Restore demo data? All records you added will be deleted.")) return;
   await api("/api/reset", { method: "POST" });

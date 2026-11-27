@@ -245,9 +245,21 @@ def quote(pickup_name, dropoff_name, when=None, rules=None, conditions=None):
     elif rounded != sum(l["kzt"] for l in lines):
         lines.append({"rule": None, "label": "Rounded to 10 ₸", "kzt": rounded - sum(l["kzt"] for l in lines)})
 
+    # Travel time: ~28 km/h on free roads; traffic, an accident on the route and bad weather slow it down
+    speed = 28.0
+    if conditions:
+        speed = {"moderate": 21.0, "heavy": 16.0}.get(conditions.get("traffic"), 28.0)
+        if acc and acc in (a["district"], b["district"]):
+            speed *= 0.85
+        speed *= {"rain": 0.9, "snow": 0.75}.get(conditions.get("weather"), 1.0)
+    minutes_free = max(5, int(round(km / 28 * 60 + 4)))
+    minutes = max(5, int(round(km / speed * 60 + 4)))
+
     return {
         "distance_km": round(km, 1),
-        "minutes": max(5, int(round(km / 28 * 60 + 4))),  # ~28 km/h in the city
+        "minutes": minutes,
+        "minutes_free_roads": minutes_free,
+        "traffic_delay_min": minutes - minutes_free,
         "price": rounded,
         "lines": lines,
         "night": night and on("night"),
@@ -451,6 +463,13 @@ def seed(con):
     for driver_id in range(1, 6):
         con.execute("INSERT INTO driver_shifts(driver_id, started_at) VALUES (?,?)",
                     (driver_id, (now - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M")))
+
+    # Saved places of the demo passenger Aigerim (passenger 1)
+    con.executemany("""INSERT INTO saved_places(passenger_id, label, address, icon, created_at)
+                       VALUES (1, ?, ?, ?, ?)""",
+                    [("Home", "Sairan Lake", "home", "2026-09-01 10:00"),
+                     ("University", "KBTU (59 Tole Bi St)", "study", "2026-09-01 10:01"),
+                     ("Gym", "Esentai Mall", "heart", "2026-10-12 19:30")])
 
 
 # ---------------------------------------------------------------------------
@@ -748,6 +767,69 @@ def review_response(ride_id, rating, comment, tags, driver_id):
 # ---------------------------------------------------------------------------
 # PASSENGER
 # ---------------------------------------------------------------------------
+SAVED_ICONS = ("home", "work", "study", "heart", "pin")
+MAX_SAVED_PLACES = 10
+
+
+@app.get("/api/my/places")
+@require("passenger")
+def my_places():
+    """The passenger's saved places. With ?from=<place> each one also gets the price and the
+    travel time from there right now, including traffic, accidents and weather."""
+    db, pid = get_db(), g.user["id"]
+    places = rows(db.execute(
+        "SELECT place_id, label, address, icon FROM saved_places WHERE passenger_id=? ORDER BY place_id", (pid,)))
+    origin = request.args.get("from")
+    if origin in PLACE_BY_NAME:
+        cond = current_conditions(db)
+        rules = load_fare_rules(db)
+        for p in places:
+            if p["address"] == origin:
+                p["estimate"] = None          # the passenger is already there
+                continue
+            q = quote(origin, p["address"], rules=rules, conditions=cond)
+            p["estimate"] = {"price": q["price"], "minutes": q["minutes"],
+                             "traffic_delay_min": q["traffic_delay_min"], "extras": q["extras"]}
+        return jsonify({"from": origin, "traffic": cond["traffic"], "places": places})
+    return jsonify({"from": None, "places": places})
+
+
+@app.post("/api/my/places")
+@require("passenger")
+def add_place():
+    """Save a new favourite place. The database refuses a second place with the same name."""
+    db, pid, b = get_db(), g.user["id"], body()
+    label = (b.get("label") or "").strip()
+    address, icon = b.get("address"), b.get("icon") or "pin"
+    if not 1 <= len(label) <= 30:
+        return bad("Give the place a name, up to 30 characters")
+    if address not in PLACE_BY_NAME:
+        return bad("Choose the address from the list")
+    if icon not in SAVED_ICONS:
+        return bad("Unknown icon")
+    if db.execute("SELECT COUNT(*) FROM saved_places WHERE passenger_id=?", (pid,)).fetchone()[0] >= MAX_SAVED_PLACES:
+        return bad(f"You can save up to {MAX_SAVED_PLACES} places", 409)
+    try:
+        cur = db.execute("""INSERT INTO saved_places(passenger_id, label, address, icon, created_at)
+                            VALUES (?,?,?,?,?)""", (pid, label, address, icon, now_str()))
+        db.commit()
+    except sqlite3.IntegrityError:
+        return bad(f'You already have a place called "{label}"', 409)
+    return jsonify({"place_id": cur.lastrowid, "label": label, "address": address, "icon": icon}), 201
+
+
+@app.delete("/api/my/places/<int:place_id>")
+@require("passenger")
+def delete_place(place_id):
+    """Delete one of your own saved places (someone else's place: 404)."""
+    db = get_db()
+    cur = db.execute("DELETE FROM saved_places WHERE place_id=? AND passenger_id=?", (place_id, g.user["id"]))
+    db.commit()
+    if cur.rowcount == 0:
+        return bad("Place not found", 404)
+    return jsonify({"deleted": place_id})
+
+
 @app.get("/api/my/rides")
 @require("passenger")
 def my_rides():
@@ -1265,6 +1347,12 @@ def set_conditions():
                    (k, v, now_str()))
     db.commit()
     return get_conditions()
+
+
+@app.get("/api/saved_places")
+@require("admin")
+def list_saved_places():
+    return jsonify(rows(get_db().execute("SELECT * FROM saved_places ORDER BY place_id")))
 
 
 @app.get("/api/fares")

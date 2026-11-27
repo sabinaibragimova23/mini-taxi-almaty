@@ -73,3 +73,12 @@ ORDER BY rowid;
 SELECT COUNT(*) AS airport_rides, SUM(price) AS total_kzt
 FROM rides
 WHERE pickup_address = 'Almaty Airport' OR dropoff_address = 'Almaty Airport';
+
+-- 10) Saved places of one passenger
+SELECT label, address, icon FROM saved_places WHERE passenger_id = 1 ORDER BY place_id;
+
+-- 11) Most popular saved addresses (where passengers go often)
+SELECT address, COUNT(*) AS saved_by
+FROM saved_places
+GROUP BY address
+ORDER BY saved_by DESC;

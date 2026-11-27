@@ -70,3 +70,16 @@ UPDATE fare_rules SET amount = 5 WHERE rule_key = 'night';
 -- 14. CHECK: only known kinds of price
 INSERT INTO fare_rules (rule_key, name, kind, amount, applies_to) VALUES ('tips', 'Tips', 'bonus', 100, 'Always');
 -- expected: CHECK constraint failed
+
+-- 15. UNIQUE: a passenger cannot have two places with the same name
+--     (Aigerim already has "Home"; the check ignores upper/lower case)
+INSERT INTO saved_places (passenger_id, label, address, icon, created_at) VALUES (1, 'home', 'Mega Alma-Ata Mall', 'home', '2026-11-27 12:00');
+-- expected: UNIQUE constraint failed
+
+-- 16. CHECK: only known icons
+INSERT INTO saved_places (passenger_id, label, address, icon, created_at) VALUES (1, 'Mom', 'Mega Alma-Ata Mall', 'car', '2026-11-27 12:00');
+-- expected: CHECK constraint failed
+
+-- 17. FOREIGN KEY: a place for a passenger that does not exist
+INSERT INTO saved_places (passenger_id, label, address, icon, created_at) VALUES (99, 'Home', 'Mega Alma-Ata Mall', 'home', '2026-11-27 12:00');
+-- expected: FOREIGN KEY constraint failed
